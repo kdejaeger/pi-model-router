@@ -32,6 +32,7 @@ export interface RouterConfig {
   phaseBias?: number;
   largeContextThreshold?: number;
   maxSessionBudget?: number;
+  enableOnNewSession?: boolean;
   rules?: RoutingRule[];
   profiles: Record<string, RouterProfile>;
 }
