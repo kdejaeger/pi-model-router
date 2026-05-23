@@ -1,6 +1,7 @@
 {
   "defaultProfile": "auto",
   "debug": false,
+  "enableOnNewSession": true,
   "classifierModel": "google/gemini-flash-lite-latest",
   "phaseBias": 0.5,
   "maxSessionBudget": 1.0,

@@ -17,6 +17,7 @@ export const ROUTER_TIERS = ['high', 'medium', 'low'] as const;
 export const FALLBACK_CONFIG: RouterConfig = {
   defaultProfile: 'auto',
   debug: false,
+  enableOnNewSession: false,
   profiles: {
     auto: {
       high: { model: 'openai/gpt-5.4-pro', thinking: 'off' },
@@ -97,6 +98,8 @@ export const mergeConfig = (
   return {
     defaultProfile: override.defaultProfile ?? base.defaultProfile,
     debug: override.debug ?? base.debug,
+    enableOnNewSession:
+      override.enableOnNewSession ?? base.enableOnNewSession,
     classifierModel: override.classifierModel ?? base.classifierModel,
     phaseBias: override.phaseBias ?? base.phaseBias,
     largeContextThreshold:
@@ -299,6 +302,10 @@ export const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
     config: {
       defaultProfile,
       debug: typeof raw.debug === 'boolean' ? raw.debug : false,
+      enableOnNewSession:
+        typeof raw.enableOnNewSession === 'boolean'
+          ? raw.enableOnNewSession
+          : false,
       classifierModel,
       phaseBias,
       largeContextThreshold,

@@ -129,6 +129,7 @@ Project config values override global values, which override built-in defaults. 
 {
   "defaultProfile": "auto",
   "debug": false,
+  "enableOnNewSession": false,
   "profiles": {
     "auto": {
       "high":   { "model": "openai/gpt-5.4-pro",        "thinking": "off" },
@@ -145,8 +146,9 @@ There are two unrelated uses of `"auto"` in this project: (1) as a **profile nam
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `defaultProfile` | `string` | `"auto"` | The profile to use on session start. Must match a key in `profiles`. |
 | `debug` | `boolean` | `false` | Enable debug mode. Equivalent to running `/router debug on` at startup. |
+| `defaultProfile` | `string` | `"auto"` | The profile to use on session start or when `enableOnNewSession` triggers. Must match a key in `profiles`. |
+| `enableOnNewSession` | `boolean` | `false` | **Optional.** When `true`, the router automatically activates with `defaultProfile` on fresh sessions (startup, `/new`). Session resume still uses the persisted router state. |
 | `classifierModel` | `string` | -- | **Optional.** A fast model ref (e.g. `google/gemini-flash-latest`) used to classify user intent via LLM, overriding heuristic-based routing. Omit to use fast local heuristics only. |
 | `phaseBias` | `number` (0.0-1.0) | `0.5` | Stickiness of the current routing phase. Higher values keep the router in the same tier longer during multi-turn conversations. |
 | `largeContextThreshold` | `number` | -- | **Optional.** Token count threshold. If session context usage exceeds this value, the router forces `high` tier regardless of other factors. |

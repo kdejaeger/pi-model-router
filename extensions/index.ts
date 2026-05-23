@@ -266,7 +266,10 @@ const routerExtension = (pi: ExtensionAPI) => {
 
   actions.reloadConfig();
 
-  const restoreStateFromSession = async (ctx: ExtensionContext) => {
+  const restoreStateFromSession = async (
+    ctx: ExtensionContext,
+    sessionStartReason: string,
+  ) => {
     lastExtensionContext = ctx;
     currentModelRegistry = ctx.modelRegistry;
     currentCwd = ctx.cwd;
@@ -322,6 +325,20 @@ const routerExtension = (pi: ExtensionAPI) => {
         : [];
       lastNonRouterModel = savedState.lastNonRouterModel ?? lastNonRouterModel;
       accumulatedCost = savedState.accumulatedCost ?? 0;
+    }
+
+    // If no persisted state was found and enableOnNewSession is true,
+    // enable the router with defaultProfile for fresh sessions.
+    if (
+      !isRouterPersistedState(savedState) &&
+      currentConfig.enableOnNewSession &&
+      (sessionStartReason === 'startup' || sessionStartReason === 'new')
+    ) {
+      routerEnabled = true;
+      selectedProfile = resolveProfileName(
+        currentConfig,
+        currentConfig.defaultProfile,
+      );
     }
 
     await actions.ensureValidActiveRouterProfile(ctx);
@@ -404,9 +421,9 @@ const routerExtension = (pi: ExtensionAPI) => {
     actions,
   );
 
-  pi.on('session_start', async (_event, ctx) => {
+  pi.on('session_start', async (event, ctx) => {
     isInitialized = true;
-    await restoreStateFromSession(ctx);
+    await restoreStateFromSession(ctx, event.reason);
     if (debugEnabled) {
       ctx.ui.notify(
         `Router initialized with profiles: ${profileNames(currentConfig).join(', ')}`,
