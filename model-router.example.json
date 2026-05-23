@@ -26,7 +26,8 @@
     "cheap": {
       "high": { "model": "google/gemini-flash-latest", "thinking": "low" },
       "medium": { "model": "openai/gpt-5.4-nano", "thinking": "off" },
-      "low": { "model": "google/gemini-flash-lite-latest", "thinking": "off" },
+      "low": { "model": "google/gemini-flash-lite-latest", "thinking": "off" }
+    },
     "deep": {
       "high": { "model": "openai/o1-preview", "thinking": "xhigh" },
       "medium": { "model": "openai/gpt-5.4-pro", "thinking": "medium" },
