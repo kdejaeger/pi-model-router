@@ -1,68 +1,76 @@
 # Architecture: Pi Model Router Extension
 
-The `pi-model-router` is an extension-first model router for the `pi` coding agent. It registers a custom logical provider (`router`) that exposes "profiles" as models (e.g., `router/auto`). For every turn, the router intelligently selects an underlying concrete model based on task complexity, conversation phase, and user-defined rules.
+The `pi-model-router` registers a custom logical provider (`router`) that exposes "profiles" as models (e.g., `router/auto`). For every turn, the router selects an underlying concrete model based on task complexity, conversation phase, and user-defined rules.
 
-## Core Concepts
-
-### 1. Profiles & Tiers
-
-The router is organized into **Profiles** (e.g., `auto`, `cheap`, `deep`). Each profile defines three **Tiers**:
-
-- **High**: Reserved for architecture, design, complex debugging, and planning. Uses high-reasoning models.
-- **Medium**: The default for standard implementation, multi-file edits, and focused fixes.
-- **Low**: Used for summaries, changelogs, formatting, and simple read-only lookups.
-
-### 2. Custom Provider Implementation
-
-The extension uses `pi.registerProvider` to hook into the `pi` model lifecycle. This ensures that the selected model in the `pi` footer remains stable (e.g., `router/auto`) while the underlying model changes transparently turn-by-turn via the `streamSimple` interception.
-
-## Routing Decision Flow
-
-For every request sent to a `router/*` model, the following logic is executed in order:
-
-### Decision Phase (inside `decideRouting()`)
-
-1. **Manual Pin**: If the user has pinned a tier via `/router pin` or `/router fix`, that tier is used immediately. No further routing logic runs.
-2. **Custom Rules**: Keyword-based rules defined in the config are checked against the user prompt. If any match, the configured tier is used.
-3. **Heuristics + Phase Bias**: A fast local analysis considers word count, keywords, explicit hints, tool results, multi-line prompts, conversation history, and the previous phase. The `phaseBias` setting modulates thresholds to keep the router in a consistent phase (e.g., staying in `high` tier during a multi-turn planning session; making it harder to drop to `low` during implementation).
-4. **Budget Check**: If a `maxSessionBudget` is configured and the accumulated session spend exceeds it, any `high` tier decision is automatically downgraded to `medium`.
-
-### Post-Heuristic Overrides (in `provider.ts`)
-
-5. **Context Trigger** (optional): If `largeContextThreshold` is exceeded (measured in tokens via `ctx.getContextUsage()`), the router **upgrades** to the `high` tier regardless of the heuristic decision. This only upgrades — it never downgrades.
-6. **LLM Classifier** (optional): If `classifierModel` is configured **and** no pin is set, no rule matched, and no context trigger fired, a fast LLM is called to categorize the user's intent. Its decision overrides the heuristic result. If the classifier chooses `high` but the budget is exceeded, it is re-downgraded to `medium`.
-
-### Post-Route Corrections
-
-7. **Google Thinking Tool Continuation**: If the last message is a tool result and the previous turn used a Google model with thinking enabled, the exact same model/tier is preserved to avoid thought-signature replay errors — even if the heuristic would route differently.
-8. **Image-Aware Escalation**: If the user attached an image and the routed tier's model doesn't support image inputs, the router escalates to the next higher tier (`low → medium → high`) that supports images.
-
-### Execution Phase
-
-9. **Auto-Context Truncation**: Before delegation, if the target model's context window is smaller than what the router reported (always the `high` tier model's capacity), the conversation is truncated by removing oldest messages while preserving the system prompt and the most recent message.
-10. **Fallback Chain**: If the primary model fails (rate limit, downtime, auth error), the router retries each configured fallback in sequence. If all fail, the error is surfaced to the user.
+> For the full decision-pipeline reference (heuristic details, budget/context controls, fallback chains, image-aware escalation, Google thinking tool continuation, auto-context truncation, and thinking control), see [How Routing Works](../README.md#how-routing-works) in the README.
 
 ## Module Architecture
 
 The extension is modularized for maintainability:
 
-- `extensions/index.ts`: Orchestrator. Manages state, hooks into `pi` events, and wires modules together.
-- `extensions/provider.ts`: Implements the `router` provider and the delegation/retry loop.
-- `extensions/routing.ts`: Core decision logic, heuristics, and the LLM classifier.
-- `extensions/config.ts`: Loads, merges, and normalizes the JSON configuration.
-- `extensions/commands.ts`: Registers all `/router` subcommands and their autocompletions.
-- `extensions/ui.ts`: Manages the status line and the optional state widget.
-- `extensions/state.ts`: Handles session-persisted state and snapshots.
-- `extensions/types.ts`: Centralized interface and type definitions.
+- **`extensions/index.ts`**: Orchestrator. Manages state, hooks into `pi` events, and wires modules together.
+- **`extensions/provider.ts`**: Implements the `router` provider and the delegation/retry loop.
+- **`extensions/routing.ts`**: Core decision logic, heuristics, and the LLM classifier.
+- **`extensions/config.ts`**: Loads, merges, and normalizes the JSON configuration.
+- **`extensions/commands.ts`**: Registers all `/router` subcommands and their autocompletions.
+- **`extensions/ui.ts`**: Manages the status line and the optional state widget.
+- **`extensions/state.ts`**: Handles session-persisted state and snapshots.
+- **`extensions/types.ts`**: Centralized interface and type definitions.
+
+### Data Flow
+
+```
+po or turn_end event
+      │
+      ▼
+index.ts ──→ routing.ts (decideRouting)
+      │               │
+      │               ▼
+      │          config.ts (load profiles, rules, thresholds)
+      │               │
+      │               ▼
+      │          state.ts (read pins, thinking overrides, debug history)
+      │               │
+      │               ▼
+      │          Return RoutingDecision
+      │
+      ▼
+provider.ts (streamSimple)
+      │
+      ├─→ Post-route corrections (context trigger, image escalation, Google continuation)
+      ├─→ Auto-context truncation
+      ├─→ Delegate to target model
+      └─→ Fallback chain on failure
+      │
+      ▼
+ui.ts (update status line + widget)
+state.ts (persist decision, cost, history)
+```
 
 ## State & Persistence
 
-The router state is persisted using `pi.appendEntry` with a custom type `router-state`. This allows the router to:
+Router state is persisted using `pi.appendEntry` with a custom type `router-state`. This allows the router to:
 
 - Restore the active profile and pins across agent relaunches.
-- Maintain independent pins and state for different conversation branches.
-- Track accumulated session costs safely.
+- Maintain independent pins and state for different conversation branches via `sessionManager.getBranch()`.
+- Track accumulated session costs safely across restarts.
 
-## Reliability: Fallback Chains
+### Persisted Fields
 
-Each tier in a profile can define an optional `fallbacks` list. If the primary model fails (e.g., due to rate limits or provider downtime), the router automatically retries the next model in the chain before surfacing an error to the user.
+| Field | Type | Description |
+|---|---|---|
+| `selectedProfile` | `string` | Active profile name |
+| `pinnedTierByProfile` | `Record<string, TierLevel>` | Manual tier pins per profile |
+| `thinkingOverride` | `Record<string, Record<string, ThinkingLevel>>` | Runtime thinking overrides |
+| `debugEnabled` | `boolean` | Debug mode state |
+| `widgetEnabled` | `boolean` | Widget visibility |
+| `lastDecision` | `RoutingDecision` | Most recent routing decision |
+| `lastNonRouterModel` | `string` | Last model used before switching to router |
+| `accumulatedCost` | `number` | Session cost accumulator (branch-safe) |
+| `debugHistory` | `RoutingDecision[]` | Recent routing decisions |
+
+> **Branch safety**: Because state is saved via `pi.appendEntry`, each conversation branch gets its own independent state. Switching branches restores the pins, cost, and history that were active on that branch.
+
+### Debug History
+
+The debug history stores the last 12 routing decisions (`MAX_DEBUG_HISTORY` in `constants.ts`). When debug mode is enabled (`/router debug on`), each decision is appended to `debugHistory` and shown in the status widget. The widget displays the most recent entries (truncated by pi's 10-line widget limit, newest first), and `/router debug show` prints the full history.

@@ -1,34 +1,18 @@
 import {
-  createAssistantMessageEventStream,
-  streamSimple,
   type Api,
   type AssistantMessage,
   type AssistantMessageEventStream,
   type Context,
+  createAssistantMessageEventStream,
+  type Message,
   type Model,
   type SimpleStreamOptions,
-  type Message,
+  streamSimple
 } from '@earendil-works/pi-ai';
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-} from '@earendil-works/pi-coding-agent';
-import type {
-  RouterConfig,
-  RoutingDecision,
-  RouterTier,
-  RouterPinByProfile,
-  RouterThinkingByProfile,
-} from './types';
-import { profileNames, parseCanonicalModelRef, ROUTER_TIERS } from './config';
-import {
-  phaseForTier,
-  buildRoutingDecision,
-  decideRouting,
-  runClassifier,
-  extractTextFromContent,
-  hasImageAttachment,
-} from './routing';
+import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
+import type { RouterConfig, RouterPinByProfile, RouterThinkingByProfile, RouterTier, RoutingDecision } from './types';
+import { parseCanonicalModelRef, profileNames, ROUTER_TIERS } from './config';
+import { buildRoutingDecision, decideRouting, extractTextFromContent, phaseForTier, runClassifier } from './routing';
 
 export const createErrorMessage = (
   model: Model<Api>,
@@ -331,18 +315,18 @@ export const registerRouterProvider = (
             };
           }
 
+          const checkModelSupportsImage = (modelRef: string) => {
+            try {
+              const { provider, modelId } = parseCanonicalModelRef(modelRef);
+              const m = state.currentModelRegistry?.find(provider, modelId);
+              return m?.input?.includes('image') ?? false;
+            } catch {
+              return false;
+            }
+          };
+
           const detectedImageInRecentContext = imageDetectedInRecentContext(context);
           if (detectedImageInRecentContext) {
-            const checkModelSupportsImage = (modelRef: string) => {
-              try {
-                const { provider, modelId } = parseCanonicalModelRef(modelRef);
-                const m = state.currentModelRegistry?.find(provider, modelId);
-                return m?.input?.includes('image') ?? false;
-              } catch {
-                return false;
-              }
-            };
-
             const tierModels = [
               decision.targetLabel,
               ...(profile[decision.tier].fallbacks ?? []),
@@ -373,17 +357,19 @@ export const registerRouterProvider = (
                   profile,
                   foundTier,
                   phaseForTier(foundTier),
-                  `Forced ${foundTier} tier because the originally routed ${decision.tier} tier does not support image attachments.`,
+                  `Forced ${foundTier} tier because ${decision.tier} tier lacks image support.`,
                   state.thinkingByProfile[model.id],
                   false,
                 );
+              } else {
+                decision.reasoning += ' No image-capable models found in any tier.';
               }
+            } else {
+              decision.reasoning += ` Image support found in ${decision.tier} tier.`;
             }
           }
 
           state.lastDecision = decision;
-          actions.recordDebugDecision(decision);
-
           if (state.lastExtensionContext) {
             actions.updateStatus(state.lastExtensionContext);
           }
@@ -393,15 +379,7 @@ export const registerRouterProvider = (
             ...(profile[decision.tier].fallbacks ?? []),
           ];
           if (detectedImageInRecentContext) {
-            modelsToTry = modelsToTry.filter((modelRef) => {
-              try {
-                const { provider, modelId } = parseCanonicalModelRef(modelRef);
-                const m = state.currentModelRegistry?.find(provider, modelId);
-                return m?.input?.includes('image') ?? false;
-              } catch {
-                return false;
-              }
-            });
+            modelsToTry = modelsToTry.filter(checkModelSupportsImage);
             if (modelsToTry.length === 0) {
               modelsToTry = [decision.targetLabel];
             }
@@ -502,13 +480,26 @@ export const registerRouterProvider = (
                 if (isContent) contentReceived = true;
                 stream.push(event);
               }
+              if (modelRef !== decision.targetLabel) { // Update decision to reflect actual model used if it was a fallback
+                decision.isFallback = true;
+                decision.targetLabel = modelRef;
+                decision.targetProvider = targetProvider;
+                decision.targetModelId = targetModelId;
+
+                state.lastDecision = decision;
+                if (state.lastExtensionContext) {
+                  actions.updateStatus(state.lastExtensionContext);
+                }
+              }
+
               success = true;
-              if (i > 0) decision.isFallback = true;
               break;
             } catch (err) {
               lastError = err;
             }
           }
+
+          actions.recordDebugDecision(decision);
 
           if (!success) {
             throw (
