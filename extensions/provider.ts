@@ -269,6 +269,7 @@ export const registerRouterProvider = (
               state.currentModelRegistry,
               context,
               state.lastDecision?.phase,
+              state.currentConfig.classifierModelThinking,
             );
             if (classifierResult) {
               decision = buildRoutingDecision(

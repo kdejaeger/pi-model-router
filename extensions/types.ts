@@ -29,6 +29,7 @@ export interface RouterConfig {
   defaultProfile?: string;
   debug?: boolean;
   classifierModel?: string;
+  classifierModelThinking?: ThinkingLevel;
   phaseBias?: number;
   largeContextThreshold?: number;
   maxSessionBudget?: number;

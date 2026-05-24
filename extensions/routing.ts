@@ -8,6 +8,7 @@ import type {
   RoutingRule,
   RouterThinkingByTier,
 } from './types';
+import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
 import { parseCanonicalModelRef, isRouterTier } from './config';
 
 export const extractTextFromContent = (
@@ -342,6 +343,7 @@ export const runClassifier = async (
   modelRegistry: ExtensionContext['modelRegistry'],
   context: Context,
   currentPhase?: RouterPhase,
+  thinking?: ThinkingLevel,
 ): Promise<{ tier: RouterTier; reasoning: string } | undefined> => {
   try {
     const { provider, modelId } = parseCanonicalModelRef(classifierModelRef);
@@ -382,7 +384,11 @@ ${currentPhase === 'implementation' ? 'Consider that the conversation is current
       messages: [{ role: 'user', content: classifierPrompt, timestamp: Date.now() }],
     };
 
-    const stream = streamSimple(model, classifierContext, { apiKey, headers });
+    const stream = streamSimple(model, classifierContext, {
+      apiKey,
+      headers,
+      ...(thinking && thinking !== 'off' ? { reasoning: thinking } : {}),
+    });
     let fullText = '';
     for await (const event of stream) {
       if (
