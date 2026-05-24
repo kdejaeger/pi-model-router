@@ -358,7 +358,7 @@ Without an LLM classifier, the router uses these signals locally:
 
 **Cost Budgeting** (`maxSessionBudget`): Once the accumulated session cost exceeds this USD limit, all `high` tier requests are automatically downgraded to `medium`. The budget is checked again after each classifier override. Cost tracking persists across session restarts via `accumulatedCost` in persisted state.
 
-**Context Trigger Upgrade** (`largeContextThreshold`): When the conversation context exceeds this token count (measured via `ctx.getContextUsage()`), the router forces `high` tier. This only upgrades -- it never downgrades.
+**Context Trigger Upgrade** (`largeContextThreshold`): When the conversation context exceeds this token count (measured via `ctx.getContextUsage()`), the router **jumps directly to `high`** tier — it does not step up one level at a time. Since context usage is cumulative and only grows across turns (unless compaction reduces it), once the threshold is crossed, the router stays on `high` for the remainder of the session. This is intentional: a weaker model with a smaller context window might truncate or lose coherence on a large conversation, so the trigger ensures the full context is preserved for subsequent requests, even trivial ones.
 
 **Phase Memory (Stickiness)** (`phaseBias`, 0.0-1.0, default `0.5`):
 - During `planning` phase, the high-tier word-count threshold is lowered (`max(40, 120 - phaseBias x 80)`), making it easier to stay in high.
@@ -387,6 +387,8 @@ When a fallback is used, `decision.isFallback` is set to `true` and shown in the
 ### Image-Aware Auto-Routing
 
 When the user attaches an image, the router checks whether the routed tier's model supports image inputs. If not, it escalates to the next higher tier (`low -> medium -> high`). If a fallback model within the escalated tier doesn't support the configured thinking level, pi clamps it internally.
+
+> **Note:** The escalation only checks image support — it does **not** compare context window sizes. To avoid landing on a model that can see images but not the full conversation, make sure your `high` tier model both supports images and has a large enough context window for your sessions. If a `medium` tier model also supports images, the escalation may stop there — confirm its context window is sufficient, or configure `low` and `medium` without image support so escalation always reaches `high`.
 
 ### Google Thinking Tool Continuation
 

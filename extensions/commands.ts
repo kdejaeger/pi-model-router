@@ -39,6 +39,7 @@ export const registerCommands = (
     debugEnabled: boolean;
     widgetEnabled: boolean;
     readonly debugHistory: RoutingDecision[];
+    readonly lastConfigWarnings: string[];
   },
   actions: {
     persistState: () => void;
@@ -523,6 +524,7 @@ export const registerCommands = (
       state.debugEnabled = !state.debugEnabled;
     }
     actions.persistState();
+    actions.updateStatus(ctx);
     ctx.ui.notify(
       `Router debug ${state.debugEnabled ? 'enabled' : 'disabled'}.`,
       'info',
@@ -536,6 +538,14 @@ export const registerCommands = (
     }
     actions.reloadConfig(ctx, { preserveDebug: true });
     await actions.ensureValidActiveRouterProfile(ctx);
+
+    if (state.lastConfigWarnings.length > 0) {
+      ctx.ui.notify(
+        `Router reload warnings:\n${state.lastConfigWarnings.join('\n')}`,
+        'warning',
+      );
+    }
+
     ctx.ui.notify(
       `Router config reloaded. Profiles: ${profileNames(state.currentConfig).join(', ')}`,
       'info',

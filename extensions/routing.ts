@@ -59,14 +59,6 @@ export const countWords = (text: string): number => {
   return text.split(/\s+/).filter(Boolean).length;
 };
 
-export const hasImageAttachment = (context: Context): boolean => {
-  return context.messages.some(
-    (message) =>
-      Array.isArray(message.content) &&
-      message.content.some((part) => part.type === 'image'),
-  );
-};
-
 export const containsAny = (text: string, keywords: string[]): boolean => {
   return keywords.some((keyword) => text.includes(keyword));
 };
@@ -304,8 +296,17 @@ export const decideRouting = (
       ) {
         phase = 'implementation';
         tier = 'medium';
-        reasoning =
-          'Detected active implementation work from prior tools or recent plan execution context.';
+        const reasons: string[] = [];
+        if (toolResultCount > 0) {
+          reasons.push(`active implementation work based on ${toolResultCount} prior tool results`);
+        }
+        if (previousDecision?.phase === 'implementation') {
+          reasons.push('continuation of implementation phase');
+        }
+        if (recentConversation.includes('plan:')) {
+          reasons.push('active plan detected in context');
+        }
+        reasoning = `Biasing to medium tier: ${reasons.join(', ')}.`;
       } else if (wordCount <= lowThreshold) {
         phase = 'lightweight';
         tier = 'low';
