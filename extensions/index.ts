@@ -127,6 +127,8 @@ const routerExtension = (pi: ExtensionAPI) => {
         accumulatedCost,
         widgetEnabled,
         currentConfig,
+        debugEnabled,
+        debugHistory,
       ),
     reloadConfig: (
       ctx?: ExtensionContext,

@@ -63,6 +63,8 @@ export const updateStatus = (
   accumulatedCost: number,
   widgetEnabled: boolean,
   currentConfig: RouterConfig,
+  debugEnabled?: boolean,
+  debugHistory?: RoutingDecision[],
 ) => {
   const activeRouterProfile = routerEnabled ? selectedProfile : undefined;
   const statusProfile = selectedProfile;
@@ -123,7 +125,12 @@ export const updateStatus = (
   if (Object.keys(pinnedTierByProfile).length > 1) {
     widgetLines.push(`Pins: ${formatPinSummary(pinnedTierByProfile)}`);
   }
-  widgetLines.push('')
+  if (debugEnabled && debugHistory && debugHistory.length > 0) {
+    for (const d of [...debugHistory].reverse()) { // Most recent first so pi's truncation keeps the latest visible
+      widgetLines.push(`[debug-history] [${new Date(d.timestamp).toLocaleTimeString()}] ${formatDecision(d)}`,);
+    }
+  }
+
   ctx.ui.setWidget(
     'router',
     widgetLines.map((line) => ctx.ui.theme.fg('dim', line)),
