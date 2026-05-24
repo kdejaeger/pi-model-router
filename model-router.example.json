@@ -3,6 +3,7 @@
   "debug": false,
   "enableOnNewSession": true,
   "classifierModel": "google/gemini-flash-lite-latest",
+  "classifierModelThinking": "off",
   "phaseBias": 0.5,
   "maxSessionBudget": 1.0,
   "largeContextThreshold": 100000,

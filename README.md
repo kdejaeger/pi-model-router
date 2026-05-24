@@ -150,6 +150,7 @@ There are two unrelated uses of `"auto"` in this project: (1) as a **profile nam
 | `defaultProfile` | `string` | `"auto"` | The profile to use on session start or when `enableOnNewSession` triggers. Must match a key in `profiles`. |
 | `enableOnNewSession` | `boolean` | `false` | **Optional.** When `true`, the router automatically activates with `defaultProfile` on fresh sessions (startup, `/new`). Session resume still uses the persisted router state. |
 | `classifierModel` | `string` | -- | **Optional.** A fast model ref (e.g. `google/gemini-flash-latest`) used to classify user intent via LLM, overriding heuristic-based routing. Omit to use fast local heuristics only. |
+| `classifierModelThinking` | `ThinkingLevel` | `off` | **Optional.** Reasoning/thinking level used when calling the classifier model. Defaults to `off` (no extended reasoning) to keep classifier calls fast and cheap. Set to `low`, `medium`, or `high` if the classifier needs more reasoning to make more accurate routing decisions. |
 | `phaseBias` | `number` (0.0-1.0) | `0.5` | Stickiness of the current routing phase. Higher values keep the router in the same tier longer during multi-turn conversations. |
 | `largeContextThreshold` | `number` | -- | **Optional.** Token count threshold. If session context usage exceeds this value, the router forces `high` tier regardless of other factors. |
 | `maxSessionBudget` | `number` (USD) | -- | **Optional.** Maximum session spend in USD. Once exceeded, all `high` tier requests are automatically downgraded to `medium`. |

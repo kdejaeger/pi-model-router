@@ -17,6 +17,7 @@ export const ROUTER_TIERS = ['high', 'medium', 'low'] as const;
 export const FALLBACK_CONFIG: RouterConfig = {
   defaultProfile: 'auto',
   debug: false,
+  classifierModelThinking: 'off',
   enableOnNewSession: false,
   profiles: {
     auto: {
@@ -101,6 +102,8 @@ export const mergeConfig = (
     enableOnNewSession:
       override.enableOnNewSession ?? base.enableOnNewSession,
     classifierModel: override.classifierModel ?? base.classifierModel,
+    classifierModelThinking:
+      override.classifierModelThinking ?? base.classifierModelThinking,
     phaseBias: override.phaseBias ?? base.phaseBias,
     largeContextThreshold:
       override.largeContextThreshold ?? base.largeContextThreshold,
@@ -298,6 +301,11 @@ export const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
     }
   }
 
+  const classifierModelThinking = isThinkingLevel(raw.classifierModelThinking) ? raw.classifierModelThinking : FALLBACK_CONFIG.classifierModelThinking;
+  if (raw.classifierModelThinking !== undefined && !isThinkingLevel(raw.classifierModelThinking)) {
+    warnings.push(`Invalid classifierModelThinking value "${raw.classifierModelThinking}". Falling back to "${FALLBACK_CONFIG.classifierModelThinking}".`);
+  }
+
   return {
     config: {
       defaultProfile,
@@ -307,6 +315,7 @@ export const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
           ? raw.enableOnNewSession
           : false,
       classifierModel,
+      classifierModelThinking,
       phaseBias,
       largeContextThreshold,
       maxSessionBudget,
