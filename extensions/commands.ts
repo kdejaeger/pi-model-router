@@ -39,6 +39,7 @@ export const registerCommands = (
     debugEnabled: boolean;
     widgetEnabled: boolean;
     readonly debugHistory: RoutingDecision[];
+    readonly lastConfigWarnings: string[];
   },
   actions: {
     persistState: () => void;
