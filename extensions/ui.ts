@@ -123,6 +123,7 @@ export const updateStatus = (
   if (Object.keys(pinnedTierByProfile).length > 1) {
     widgetLines.push(`Pins: ${formatPinSummary(pinnedTierByProfile)}`);
   }
+  widgetLines.push('')
   ctx.ui.setWidget(
     'router',
     widgetLines.map((line) => ctx.ui.theme.fg('dim', line)),
