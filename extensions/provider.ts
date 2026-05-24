@@ -123,6 +123,18 @@ const supportsReasoning = (
   return false;
 };
 
+const imageDetectedInRecentContext = (context: Context): boolean => {
+  // Only check the last 6 messages (typically covers the last 3 full turns (3 user messages and 3 assistant responses)
+  // to detect images relevant to the current turn. This covers: direct user uploads, tool results from screenshot reads,
+  // and assistant messages with images - without firing on stale images from many turns ago.
+  const recentMessages = context.messages.slice(-6);
+  return recentMessages.some(
+    (message) =>
+      Array.isArray(message.content) &&
+      message.content.some((part) => part.type === 'image'),
+  );
+};
+
 export const registerRouterProvider = (
   pi: ExtensionAPI,
   state: {
@@ -319,8 +331,8 @@ export const registerRouterProvider = (
             };
           }
 
-          const imageAttached = hasImageAttachment(context);
-          if (imageAttached) {
+          const detectedImageInRecentContext = imageDetectedInRecentContext(context);
+          if (detectedImageInRecentContext) {
             const checkModelSupportsImage = (modelRef: string) => {
               try {
                 const { provider, modelId } = parseCanonicalModelRef(modelRef);
@@ -380,7 +392,7 @@ export const registerRouterProvider = (
             decision.targetLabel,
             ...(profile[decision.tier].fallbacks ?? []),
           ];
-          if (imageAttached) {
+          if (detectedImageInRecentContext) {
             modelsToTry = modelsToTry.filter((modelRef) => {
               try {
                 const { provider, modelId } = parseCanonicalModelRef(modelRef);
