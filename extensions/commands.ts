@@ -524,6 +524,7 @@ export const registerCommands = (
       state.debugEnabled = !state.debugEnabled;
     }
     actions.persistState();
+    actions.updateStatus(ctx);
     ctx.ui.notify(
       `Router debug ${state.debugEnabled ? 'enabled' : 'disabled'}.`,
       'info',
