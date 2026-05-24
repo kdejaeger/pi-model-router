@@ -419,6 +419,9 @@ const routerExtension = (pi: ExtensionAPI) => {
       get debugHistory() {
         return debugHistory;
       },
+      get lastConfigWarnings() {
+        return lastConfigWarnings;
+      },
     },
     actions,
   );
@@ -426,6 +429,14 @@ const routerExtension = (pi: ExtensionAPI) => {
   pi.on('session_start', async (event, ctx) => {
     isInitialized = true;
     await restoreStateFromSession(ctx, event.reason);
+
+    if (lastConfigWarnings.length > 0) {
+      ctx.ui.notify(
+        `Router config warnings:\n${lastConfigWarnings.join('\n')}`,
+        'warning',
+      );
+    }
+
     if (debugEnabled) {
       ctx.ui.notify(
         `Router initialized with profiles: ${profileNames(currentConfig).join(', ')}`,

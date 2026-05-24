@@ -536,6 +536,14 @@ export const registerCommands = (
     }
     actions.reloadConfig(ctx, { preserveDebug: true });
     await actions.ensureValidActiveRouterProfile(ctx);
+
+    if (state.lastConfigWarnings.length > 0) {
+      ctx.ui.notify(
+        `Router reload warnings:\n${state.lastConfigWarnings.join('\n')}`,
+        'warning',
+      );
+    }
+
     ctx.ui.notify(
       `Router config reloaded. Profiles: ${profileNames(state.currentConfig).join(', ')}`,
       'info',
