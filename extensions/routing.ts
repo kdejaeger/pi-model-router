@@ -304,8 +304,17 @@ export const decideRouting = (
       ) {
         phase = 'implementation';
         tier = 'medium';
-        reasoning =
-          'Detected active implementation work from prior tools or recent plan execution context.';
+        const reasons: string[] = [];
+        if (toolResultCount > 0) {
+          reasons.push(`active implementation work based on ${toolResultCount} prior tool results`);
+        }
+        if (previousDecision?.phase === 'implementation') {
+          reasons.push('continuation of implementation phase');
+        }
+        if (recentConversation.includes('plan:')) {
+          reasons.push('active plan detected in context');
+        }
+        reasoning = `Biasing to medium tier: ${reasons.join(', ')}.`;
       } else if (wordCount <= lowThreshold) {
         phase = 'lightweight';
         tier = 'low';
