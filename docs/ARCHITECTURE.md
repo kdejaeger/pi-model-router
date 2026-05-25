@@ -37,7 +37,14 @@ index.ts ──→ routing.ts (decideRouting)
       ▼
 provider.ts (streamSimple)
       │
-      ├─→ Post-route corrections (context trigger, image escalation, Google continuation)
+      ├─→ Google lock: preserve exact model if Google thinking continuation
+      ├─→ Classifier gating:
+      │     ├─ New user message? → run full pipeline
+      │     ├─ Tool continuation # ≤ initialContinuations? → run
+      │     ├─ Consecutive failures ≥ failureTrigger? → run (crisis)
+      │     ├─ Continuation % cadence === 0? → run (periodic)
+      │     └─ Otherwise → reuse previous decision
+      ├─→ Post-route corrections (context trigger, image escalation)
       ├─→ Auto-context truncation
       ├─→ Delegate to target model
       └─→ Fallback chain on failure

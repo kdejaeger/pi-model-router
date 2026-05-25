@@ -78,9 +78,36 @@ export const getRecentConversationText = (
     .join('\n\n');
 };
 
-export const countToolResults = (context: Context): number => {
-  return context.messages.filter((message) => message.role === 'toolResult')
-    .length;
+/** Count tool results since the last user message (current turn only). */
+export const countToolResultsSinceLastUserPrompt = (
+  context: Context,
+): number => {
+  let count = 0;
+  for (let i = context.messages.length - 1; i >= 0; i--) {
+    const msg = context.messages[i] as Message;
+    if (msg.role === 'user') break;
+    if (msg.role === 'toolResult') count++;
+  }
+  return count;
+};
+
+/** Count consecutive failed tool results from the tail of the current turn.
+ *  Resets to 0 as soon as a successful tool result is encountered. */
+export const countConsecutiveRecentToolFailures = (
+  context: Context,
+): number => {
+  let count = 0;
+  for (let i = context.messages.length - 1; i >= 0; i--) {
+    const msg = context.messages[i] as Message;
+    if (msg.role === 'user') break;
+    if (msg.role !== 'toolResult') continue;
+    if ((msg as any).isError) {
+      count++;
+    } else {
+      break; // success resets the chain
+    }
+  }
+  return count;
 };
 
 export const countWords = (text: string): number => {
@@ -140,7 +167,7 @@ export const decideRouting = (
 ): RoutingDecision => {
   const prompt = getLastUserText(context).toLowerCase();
   const recentConversation = getRecentConversationText(context);
-  const toolResultCount = countToolResults(context);
+  const toolResultCountSinceLastUserPrompt = countToolResultsSinceLastUserPrompt(context);
   const wordCount = countWords(prompt);
   const multiLinePrompt = prompt.split('\n').length >= 4;
 
@@ -300,14 +327,14 @@ export const decideRouting = (
       } else if (
         containsAny(prompt, lookupKeywords) &&
         wordCount <= 24 &&
-        toolResultCount === 0
+        toolResultCountSinceLastUserPrompt === 0
       ) {
         phase = 'lightweight';
         tier = 'low';
         reasoning = 'Detected a short read-only lookup request.';
       } else if (
         previousDecision?.phase === 'planning' &&
-        toolResultCount === 0 &&
+        toolResultCountSinceLastUserPrompt === 0 &&
         wordCount > lowThreshold
       ) {
         phase = 'planning';

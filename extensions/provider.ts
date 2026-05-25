@@ -7,17 +7,22 @@ import {
   type Message,
   type Model,
   type SimpleStreamOptions,
-  streamSimple
+  streamSimple,
 } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { RouterConfig, RouterPinByProfile, RouterThinkingByProfile, RouterTier, RoutingDecision } from './types';
 import { parseCanonicalModelRef, profileNames, ROUTER_TIERS } from './config';
-import { buildRoutingDecision, decideRouting, extractTextFromContent, phaseForTier, runClassifier } from './routing';
+import {
+  buildRoutingDecision,
+  countConsecutiveRecentToolFailures,
+  countToolResultsSinceLastUserPrompt,
+  decideRouting,
+  extractTextFromContent,
+  phaseForTier,
+  runClassifier,
+} from './routing';
 
-export const createErrorMessage = (
-  model: Model<Api>,
-  message: string,
-): AssistantMessage => {
+export const createErrorMessage = (model: Model<Api>, message: string): AssistantMessage => {
   return {
     role: 'assistant',
     content: [],
@@ -51,16 +56,11 @@ const truncateContext = (context: Context, limit: number): Context => {
   const messages = [...context.messages];
   if (messages.length <= 1) return context;
 
-  const getSystemTokens = () =>
-    context.systemPrompt ? estimateTokens(context.systemPrompt) : 0;
+  const getSystemTokens = () => (context.systemPrompt ? estimateTokens(context.systemPrompt) : 0);
 
   // Initial estimate
   const totalTokens =
-    getSystemTokens() +
-    messages.reduce(
-      (sum, m) => sum + estimateTokens(extractTextFromContent(m.content)),
-      0,
-    );
+    getSystemTokens() + messages.reduce((sum, m) => sum + estimateTokens(extractTextFromContent(m.content)), 0);
   if (totalTokens <= limit) return context;
 
   const latestMessage = messages.pop();
@@ -71,10 +71,7 @@ const truncateContext = (context: Context, limit: number): Context => {
     const currentTokens =
       getSystemTokens() +
       estimateTokens(extractTextFromContent(latestMessage.content)) +
-      messages.reduce(
-        (sum, m) => sum + estimateTokens(extractTextFromContent(m.content)),
-        0,
-      );
+      messages.reduce((sum, m) => sum + estimateTokens(extractTextFromContent(m.content)), 0);
 
     if (currentTokens <= limit) break;
     messages.shift(); // Remove oldest
@@ -113,9 +110,7 @@ const imageDetectedInRecentContext = (context: Context): boolean => {
   // and assistant messages with images - without firing on stale images from many turns ago.
   const recentMessages = context.messages.slice(-6);
   return recentMessages.some(
-    (message) =>
-      Array.isArray(message.content) &&
-      message.content.some((part) => part.type === 'image'),
+    (message) => Array.isArray(message.content) && message.content.some((part) => part.type === 'image'),
   );
 };
 
@@ -124,9 +119,7 @@ export const registerRouterProvider = (
   state: {
     lastRegisteredModels: string;
     readonly currentConfig: RouterConfig;
-    readonly currentModelRegistry:
-      | ExtensionContext['modelRegistry']
-      | undefined;
+    readonly currentModelRegistry: ExtensionContext['modelRegistry'] | undefined;
     readonly lastExtensionContext: ExtensionContext | undefined;
     selectedProfile: string;
     routerEnabled: boolean;
@@ -201,9 +194,7 @@ export const registerRouterProvider = (
       (async () => {
         try {
           if (!state.currentModelRegistry) {
-            throw new Error(
-              'Router provider not initialized yet. Wait for session_start and retry.',
-            );
+            throw new Error('Router provider not initialized yet. Wait for session_start and retry.');
           }
           const profile = currentConfig.profiles[model.id];
           if (!profile) {
@@ -215,14 +206,14 @@ export const registerRouterProvider = (
 
           const pinnedTier = state.pinnedTierByProfile[model.id];
           const isBudgetExceeded =
-            currentConfig.maxSessionBudget !== undefined &&
-            state.accumulatedCost >= currentConfig.maxSessionBudget;
+            currentConfig.maxSessionBudget !== undefined && state.accumulatedCost >= currentConfig.maxSessionBudget;
+          const lastDecision = state.lastDecision;
 
           let decision: RoutingDecision = decideRouting(
             context,
             model.id,
             profile,
-            state.lastDecision,
+            lastDecision,
             pinnedTier,
             state.thinkingByProfile[model.id],
             currentConfig.phaseBias,
@@ -231,17 +222,10 @@ export const registerRouterProvider = (
           );
 
           // Optional Context Trigger Upgrade
-          if (
-            currentConfig.largeContextThreshold &&
-            decision.tier !== 'high' &&
-            state.lastExtensionContext
-          ) {
+          if (currentConfig.largeContextThreshold && decision.tier !== 'high' && state.lastExtensionContext) {
             try {
               const usage = await state.lastExtensionContext.getContextUsage();
-              if (
-                usage?.tokens &&
-                usage.tokens > currentConfig.largeContextThreshold
-              ) {
+              if (usage?.tokens && usage.tokens > currentConfig.largeContextThreshold) {
                 decision = buildRoutingDecision(
                   model.id,
                   profile,
@@ -258,71 +242,98 @@ export const registerRouterProvider = (
             }
           }
 
-          // Classifier Override
-          if (
-            currentConfig.classifierModel &&
-            !pinnedTier &&
-            !decision.isContextTriggered &&
-            !decision.isRuleMatched
-          ) {
-            if (state.debugEnabled && state.lastExtensionContext) {
-              state.lastExtensionContext.ui.notify(`Running classifier - ${currentConfig.classifierModel} (${currentConfig.classifierModelThinking})`, 'warning');
-            }
-            const classifierResult = await runClassifier(
-              currentConfig.classifierModel,
-              state.currentModelRegistry,
-              context,
-              state.lastDecision?.phase,
-              currentConfig.classifierModelThinking,
-            );
-            if (classifierResult) {
-              if (state.debugEnabled && state.lastExtensionContext) {
-                state.lastExtensionContext.ui.notify(`Classifier result: tier=${classifierResult.tier} — ${classifierResult.reasoning}`, 'warning');
-              }
-              decision = buildRoutingDecision(
-                model.id,
-                profile,
-                classifierResult.tier,
-                phaseForTier(classifierResult.tier),
-                `Classifier: ${classifierResult.reasoning}`,
-                state.thinkingByProfile[model.id],
-                true,
-              );
-              if (isBudgetExceeded && decision.tier === 'high') {
-                decision.tier = 'medium';
-                decision.phase = 'implementation';
-                decision.reasoning = `Budget exceeded. Downgraded classifier decision to medium. (Original: ${decision.reasoning})`;
-                decision.isBudgetForced = true;
-              }
-            } else if (state.debugEnabled && state.lastExtensionContext) {
-              state.lastExtensionContext.ui.notify('Classifier returned no result — falling back to heuristics', 'warning',);
-            }
-          }
-
+          // ── Turn-level classifier gating ──
           const lastMessage = context.messages[context.messages.length - 1];
-          const previousDecision = state.lastDecision;
-          const isGoogleThinkingToolContinuation =
-            lastMessage?.role === 'toolResult' &&
-            previousDecision?.profile === model.id &&
-            previousDecision.targetProvider === 'google' &&
-            previousDecision.thinking !== 'off' &&
-            decision.targetProvider === 'google' &&
-            decision.thinking !== 'off' &&
-            previousDecision.targetLabel !== decision.targetLabel;
+          const isToolContinuation = lastMessage?.role === 'toolResult';
 
-          if (isGoogleThinkingToolContinuation) {
+          // Google thinking lock — preserve exact model on tool-result continuations
+          const isGoogleContinuation =
+            isToolContinuation &&
+            lastDecision?.profile === model.id &&
+            lastDecision?.targetProvider === 'google' &&
+            lastDecision?.thinking !== 'off';
+          if (isGoogleContinuation) {
             decision = {
               ...decision,
-              tier: previousDecision!.tier,
-              phase: previousDecision!.phase,
-              targetProvider: previousDecision!.targetProvider,
-              targetModelId: previousDecision!.targetModelId,
-              targetLabel: previousDecision!.targetLabel,
-              thinking: previousDecision!.thinking,
-              reasoning:
-                `Preserved ${previousDecision!.targetLabel} for a Google tool-result continuation ` +
-                `to avoid thought-signature replay errors. (Original: ${decision.reasoning})`,
+              tier: lastDecision.tier,
+              phase: lastDecision.phase,
+              targetProvider: lastDecision.targetProvider,
+              targetModelId: lastDecision.targetModelId,
+              targetLabel: lastDecision.targetLabel,
+              thinking: lastDecision.thinking,
+              reasoning: `Preserved ${lastDecision.targetLabel} for Google tool-result continuation.`,
             };
+          } else {
+            // Decide whether to run classifier this turn
+            const classifierModel = currentConfig.classifierModel;
+            const contCount = countToolResultsSinceLastUserPrompt(context);
+            const shouldRunClassifier = (() => {
+              if (!classifierModel) return false;
+              if (!isToolContinuation) return true;
+              if (pinnedTier || decision.isContextTriggered || decision.isRuleMatched) return false;
+
+              const failCount = countConsecutiveRecentToolFailures(context);
+              const confInitN = currentConfig.classifierInitialContinuations ?? 1;
+              const confFailN = currentConfig.classifierFailureTrigger ?? 2;
+              const confCadence = currentConfig.classifierCadence ?? 8;
+
+              const triggers: string[] = [];
+              if (contCount <= confInitN) triggers.push(`init(≤${confInitN})`);
+              if (failCount >= confFailN) triggers.push(`fail(${failCount}≥${confFailN})`);
+
+              // Cadence: crossed a boundary since last classifier run
+              const lastCad = lastDecision?.classifierContCount ?? 0;
+              if (confCadence > 0 && Math.floor(contCount / confCadence) > Math.floor(lastCad / confCadence)) {
+                triggers.push(`cadence(%${confCadence})`);
+              }
+              if (state.debugEnabled && state.lastExtensionContext) {
+                if (triggers.length > 0) {
+                  state.lastExtensionContext.ui.notify(
+                    `RUN classifier — ${triggers.join(', ')} (cont:${contCount})`,
+                    'info',
+                  );
+                } else {
+                  state.lastExtensionContext.ui.notify(
+                    `SKIP classifier (cont:${contCount}, fail:${failCount})`,
+                    'info',
+                  );
+                }
+              }
+              return triggers.length > 0;
+            })();
+
+            if (shouldRunClassifier) {
+              const classifierResult = await runClassifier(
+                classifierModel!,
+                state.currentModelRegistry,
+                context,
+                lastDecision?.phase,
+                currentConfig.classifierModelThinking,
+              );
+              if (classifierResult) {
+                if (state.debugEnabled && state.lastExtensionContext) {
+                  state.lastExtensionContext.ui.notify(`Classifier → ${classifierResult.tier}: ${classifierResult.reasoning}`, 'info');
+                }
+                decision = buildRoutingDecision(
+                  model.id,
+                  profile,
+                  classifierResult.tier,
+                  phaseForTier(classifierResult.tier),
+                  `Classifier: ${classifierResult.reasoning}`,
+                  state.thinkingByProfile[model.id],
+                  true,
+                );
+                if (isBudgetExceeded && decision.tier === 'high') {
+                  decision.tier = 'medium';
+                  decision.phase = 'implementation';
+                  decision.reasoning = `Budget exceeded. Downgraded classifier to medium. (Original: ${classifierResult.reasoning})`;
+                  decision.isBudgetForced = true;
+                }
+              } else if (state.debugEnabled && state.lastExtensionContext) {
+                state.lastExtensionContext.ui.notify('Classifier returned no result — using heuristics', 'warning');
+              }
+              decision.classifierContCount = contCount;
+            }
           }
 
           const checkModelSupportsImage = (modelRef: string) => {
@@ -337,24 +348,14 @@ export const registerRouterProvider = (
 
           const detectedImageInRecentContext = imageDetectedInRecentContext(context);
           if (detectedImageInRecentContext) {
-            const tierModels = [
-              decision.targetLabel,
-              ...(profile[decision.tier].fallbacks ?? []),
-            ];
+            const tierModels = [decision.targetLabel, ...(profile[decision.tier].fallbacks ?? [])];
             if (!tierModels.some(checkModelSupportsImage)) {
               const tiersToTry: RouterTier[] =
-                decision.tier === 'low'
-                  ? ['medium', 'high']
-                  : decision.tier === 'medium'
-                    ? ['high']
-                    : [];
+                decision.tier === 'low' ? ['medium', 'high'] : decision.tier === 'medium' ? ['high'] : [];
 
               let foundTier: RouterTier | undefined;
               for (const t of tiersToTry) {
-                const tModels = [
-                  profile[t].model,
-                  ...(profile[t].fallbacks ?? []),
-                ];
+                const tModels = [profile[t].model, ...(profile[t].fallbacks ?? [])];
                 if (tModels.some(checkModelSupportsImage)) {
                   foundTier = t;
                   break;
@@ -384,10 +385,7 @@ export const registerRouterProvider = (
             actions.updateStatus(state.lastExtensionContext);
           }
 
-          let modelsToTry = [
-            decision.targetLabel,
-            ...(profile[decision.tier].fallbacks ?? []),
-          ];
+          let modelsToTry = [decision.targetLabel, ...(profile[decision.tier].fallbacks ?? [])];
           if (detectedImageInRecentContext) {
             modelsToTry = modelsToTry.filter(checkModelSupportsImage);
             if (modelsToTry.length === 0) {
@@ -399,24 +397,17 @@ export const registerRouterProvider = (
 
           for (let i = 0; i < modelsToTry.length; i++) {
             const modelRef = modelsToTry[i];
-            const { provider: targetProvider, modelId: targetModelId } =
-              parseCanonicalModelRef(modelRef);
+            const { provider: targetProvider, modelId: targetModelId } = parseCanonicalModelRef(modelRef);
 
             if (targetProvider === 'router') continue;
 
-            const targetModel = state.currentModelRegistry.find(
-              targetProvider,
-              targetModelId,
-            );
+            const targetModel = state.currentModelRegistry.find(targetProvider, targetModelId);
             if (!targetModel) {
-              lastError = new Error(
-                `Routed model not found: ${targetProvider}/${targetModelId}`,
-              );
+              lastError = new Error(`Routed model not found: ${targetProvider}/${targetModelId}`);
               continue;
             }
 
-            const auth =
-              await state.currentModelRegistry.getApiKeyAndHeaders(targetModel);
+            const auth = await state.currentModelRegistry.getApiKeyAndHeaders(targetModel);
             if (!auth.ok || !auth.apiKey) {
               lastError = new Error(
                 auth.ok
@@ -437,13 +428,9 @@ export const registerRouterProvider = (
                 effectiveContext = truncateContext(context, targetLimit);
               }
 
-              const thinkingOverride = actions.getThinkingOverride(
-                model.id,
-                decision.tier,
-              );
+              const thinkingOverride = actions.getThinkingOverride(model.id, decision.tier);
               const delegatedReasoning =
-                targetModel.reasoning &&
-                (thinkingOverride ?? decision.thinking) !== 'off'
+                targetModel.reasoning && (thinkingOverride ?? decision.thinking) !== 'off'
                   ? (thinkingOverride ?? decision.thinking)
                   : undefined;
 
@@ -457,18 +444,12 @@ export const registerRouterProvider = (
                 }
               }
 
-              const delegatedStream = streamSimple(
-                targetModel,
-                effectiveContext,
-                {
-                  ...options,
-                  apiKey,
-                  headers,
-                  ...(delegatedReasoning
-                    ? { reasoning: delegatedReasoning }
-                    : {}),
-                },
-              );
+              const delegatedStream = streamSimple(targetModel, effectiveContext, {
+                ...options,
+                apiKey,
+                headers,
+                ...(delegatedReasoning ? { reasoning: delegatedReasoning } : {}),
+              });
 
               let contentReceived = false;
               for await (const event of delegatedStream) {
@@ -477,10 +458,7 @@ export const registerRouterProvider = (
                   state.accumulatedCost += cost;
                 }
                 if (event.type === 'error' && !contentReceived) {
-                  throw new Error(
-                    (event as any).error?.errorMessage ||
-                      'Model failed before sending content.',
-                  );
+                  throw new Error((event as any).error?.errorMessage || 'Model failed before sending content.');
                 }
                 const isContent =
                   event.type === 'text_delta' ||
@@ -490,7 +468,8 @@ export const registerRouterProvider = (
                 if (isContent) contentReceived = true;
                 stream.push(event);
               }
-              if (modelRef !== decision.targetLabel) { // Update decision to reflect actual model used if it was a fallback
+              if (modelRef !== decision.targetLabel) {
+                // Update decision to reflect actual model used if it was a fallback
                 decision.isFallback = true;
                 decision.targetLabel = modelRef;
                 decision.targetProvider = targetProvider;
@@ -512,10 +491,7 @@ export const registerRouterProvider = (
           actions.recordDebugDecision(decision);
 
           if (!success) {
-            throw (
-              lastError ||
-              new Error('Failed to delegate to any model in the chain.')
-            );
+            throw lastError || new Error('Failed to delegate to any model in the chain.');
           }
 
           stream.end();
@@ -523,10 +499,7 @@ export const registerRouterProvider = (
           stream.push({
             type: 'error',
             reason: 'error',
-            error: createErrorMessage(
-              model,
-              error instanceof Error ? error.message : String(error),
-            ),
+            error: createErrorMessage(model, error instanceof Error ? error.message : String(error)),
           });
           stream.end();
         } finally {
