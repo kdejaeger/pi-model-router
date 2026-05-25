@@ -31,9 +31,14 @@ export const extractTextFromContent = (
 
 export const getLastUserText = (context: Context): string => {
   for (let i = context.messages.length - 1; i >= 0; i--) {
-    const message = context.messages[i];
+    const message = context.messages[i] as Message;
     if (message.role === 'user') {
-      return extractTextFromContent(message.content).trim();
+      const content = extractTextFromContent(message.content).trim();
+      if (message.timestamp) {
+        const time = new Date(message.timestamp).toISOString();
+        return `[${time}] ${content}`;
+      }
+      return content;
     }
   }
   return '';
@@ -45,10 +50,32 @@ export const getRecentConversationText = (
 ): string => {
   return context.messages
     .slice(-limit)
-    .map((message) => extractTextFromContent(message.content).trim())
+    .map((message) => {
+      const time = message.timestamp ? `[${new Date(message.timestamp).toISOString()}] ` : '';
+
+      let rolePrefix: string;
+      const role = (message as Message).role;
+      switch (role) {
+        case 'user':
+          rolePrefix = 'User';
+          break;
+        case 'assistant':
+          rolePrefix = 'Assistant';
+          break;
+        case 'toolResult':
+          rolePrefix = 'Tool';
+          break;
+        default:
+          rolePrefix = role || 'Unknown';
+      }
+
+      const content = extractTextFromContent(message.content).trim();
+      if (!content) return '';
+
+      return `${time}${rolePrefix}: ${content}`;
+    })
     .filter(Boolean)
-    .join('\n')
-    .toLowerCase();
+    .join('\n\n');
 };
 
 export const countToolResults = (context: Context): number => {
