@@ -355,27 +355,27 @@ export const runClassifier = async (
     const apiKey = auth.apiKey;
     const headers = auth.headers;
 
-    const promptText = getLastUserText(context);
     const historyText = getRecentConversationText(context, 4);
+    const promptText = getLastUserText(context);
 
     const classifierPrompt = `You are a model router classifier. Your job is to categorize the user's latest request into one of three tiers: "high", "medium", or "low".
 
 Tiers:
-- high: Architecture, design, planning, tradeoff analysis, broad debugging, large refactors, codebase research.
-- medium: Implementation of a known plan, multi-file edits, normal coding work, focused debugging, tests/fixes.
-- low: Summaries, changelogs, formatting, quick explanations, small bounded transforms, simple read-only lookup.
+- high: Complex reasoning, architectural design, multi-step planning, tradeoff analysis, or resolving deep-rooted bugs that require a holistic understanding of the project.
+- medium: Standard coding tasks, implementing well-defined features, multi-file edits, focused debugging, and writing tests within an established pattern.
+- low: Routine tasks requiring no or minimal reasoning, such as summaries, changelogs, formatting, quick explanations, simple lookups, or small, bounded text transforms.
 
-${currentPhase ? `Current conversation phase: ${currentPhase}\n` : ''}
-Recent history:
+Recent history & tool results (The Context):
 ${historyText}
 
-Latest user message:
+Latest user message (The Intent):
 ${promptText}
 
 Return your decision in exactly two lines:
 Tier: [high|medium|low]
-Reasoning: [one short sentence]
+Reasoning: [one concise sentence summarizing the request's complexity and why it fits the tier]
 
+${currentPhase ? `Current conversation phase: ${currentPhase}` : ''}
 ${currentPhase === 'planning' ? 'Consider that the conversation is currently in a planning phase. Bias toward "high" unless the request is clearly a simple implementation or summary.' : ''}
 ${currentPhase === 'implementation' ? 'Consider that the conversation is currently in an implementation phase. Bias toward "medium" unless the request is clearly planning or a simple summary.' : ''}`;
 
