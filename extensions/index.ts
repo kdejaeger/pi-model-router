@@ -255,6 +255,9 @@ const routerExtension = (pi: ExtensionAPI) => {
           set accumulatedCost(v) {
             accumulatedCost = v;
           },
+          get debugEnabled() {
+            return debugEnabled;
+          },
         },
         {
           persistState,

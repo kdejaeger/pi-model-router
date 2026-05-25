@@ -134,6 +134,7 @@ export const registerRouterProvider = (
     readonly thinkingByProfile: RouterThinkingByProfile;
     readonly pinnedTierByProfile: RouterPinByProfile;
     accumulatedCost: number;
+    debugEnabled: boolean;
   },
   actions: {
     persistState: () => void;
@@ -142,11 +143,11 @@ export const registerRouterProvider = (
     updateStatus: (ctx: ExtensionContext) => void;
   },
 ) => {
-  const profileList = profileNames(state.currentConfig);
+  const currentConfig = state.currentConfig;
 
   // Map profiles to their capacities
-  const modelDefinitions = profileList.map((name) => {
-    const profile = state.currentConfig.profiles[name];
+  const modelDefinitions = profileNames(currentConfig).map((name) => {
+    const profile = currentConfig.profiles[name];
     let contextWindow = 1_000_000;
     let maxTokens = 64_000;
 
@@ -204,7 +205,7 @@ export const registerRouterProvider = (
               'Router provider not initialized yet. Wait for session_start and retry.',
             );
           }
-          const profile = state.currentConfig.profiles[model.id];
+          const profile = currentConfig.profiles[model.id];
           if (!profile) {
             throw new Error(`Unknown router profile: ${model.id}`);
           }
@@ -214,8 +215,8 @@ export const registerRouterProvider = (
 
           const pinnedTier = state.pinnedTierByProfile[model.id];
           const isBudgetExceeded =
-            state.currentConfig.maxSessionBudget !== undefined &&
-            state.accumulatedCost >= state.currentConfig.maxSessionBudget;
+            currentConfig.maxSessionBudget !== undefined &&
+            state.accumulatedCost >= currentConfig.maxSessionBudget;
 
           let decision: RoutingDecision = decideRouting(
             context,
@@ -224,14 +225,14 @@ export const registerRouterProvider = (
             state.lastDecision,
             pinnedTier,
             state.thinkingByProfile[model.id],
-            state.currentConfig.phaseBias,
-            state.currentConfig.rules,
+            currentConfig.phaseBias,
+            currentConfig.rules,
             isBudgetExceeded,
           );
 
           // Optional Context Trigger Upgrade
           if (
-            state.currentConfig.largeContextThreshold &&
+            currentConfig.largeContextThreshold &&
             decision.tier !== 'high' &&
             state.lastExtensionContext
           ) {
@@ -239,14 +240,14 @@ export const registerRouterProvider = (
               const usage = await state.lastExtensionContext.getContextUsage();
               if (
                 usage?.tokens &&
-                usage.tokens > state.currentConfig.largeContextThreshold
+                usage.tokens > currentConfig.largeContextThreshold
               ) {
                 decision = buildRoutingDecision(
                   model.id,
                   profile,
                   'high',
                   'planning',
-                  `Context usage (${usage.tokens}) exceeds threshold (${state.currentConfig.largeContextThreshold}). Forced high tier.`,
+                  `Context usage (${usage.tokens}) exceeds threshold (${currentConfig.largeContextThreshold}). Forced high tier.`,
                   state.thinkingByProfile[model.id],
                   false,
                 );
@@ -259,19 +260,25 @@ export const registerRouterProvider = (
 
           // Classifier Override
           if (
-            state.currentConfig.classifierModel &&
+            currentConfig.classifierModel &&
             !pinnedTier &&
             !decision.isContextTriggered &&
             !decision.isRuleMatched
           ) {
+            if (state.debugEnabled && state.lastExtensionContext) {
+              state.lastExtensionContext.ui.notify(`Running classifier - ${currentConfig.classifierModel} (${currentConfig.classifierModelThinking})`, 'warning');
+            }
             const classifierResult = await runClassifier(
-              state.currentConfig.classifierModel,
+              currentConfig.classifierModel,
               state.currentModelRegistry,
               context,
               state.lastDecision?.phase,
-              state.currentConfig.classifierModelThinking,
+              currentConfig.classifierModelThinking,
             );
             if (classifierResult) {
+              if (state.debugEnabled && state.lastExtensionContext) {
+                state.lastExtensionContext.ui.notify(`Classifier result: tier=${classifierResult.tier} — ${classifierResult.reasoning}`, 'warning');
+              }
               decision = buildRoutingDecision(
                 model.id,
                 profile,
@@ -287,6 +294,8 @@ export const registerRouterProvider = (
                 decision.reasoning = `Budget exceeded. Downgraded classifier decision to medium. (Original: ${decision.reasoning})`;
                 decision.isBudgetForced = true;
               }
+            } else if (state.debugEnabled && state.lastExtensionContext) {
+              state.lastExtensionContext.ui.notify('Classifier returned no result — falling back to heuristics', 'warning',);
             }
           }
 
