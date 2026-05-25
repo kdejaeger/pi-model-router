@@ -427,10 +427,7 @@ export const registerCommands = (
       return;
     }
     if (!state.lastNonRouterModel) {
-      ctx.ui.notify(
-        'No previous non-router model recorded. Use /model to pick a concrete model.',
-        'warning',
-      );
+      ctx.ui.notify('No previous non-router model recorded. Use /model to pick a concrete model.', 'warning');
       return;
     }
     const { provider, modelId } = parseCanonicalModelRef(
@@ -540,10 +537,7 @@ export const registerCommands = (
     await actions.ensureValidActiveRouterProfile(ctx);
 
     if (state.lastConfigWarnings.length > 0) {
-      ctx.ui.notify(
-        `Router reload warnings:\n${state.lastConfigWarnings.join('\n')}`,
-        'warning',
-      );
+      ctx.ui.notify(`Router reload warnings:\n${state.lastConfigWarnings.join('\n')}`, 'warning');
     }
 
     ctx.ui.notify(
