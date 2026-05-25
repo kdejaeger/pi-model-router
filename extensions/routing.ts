@@ -287,16 +287,12 @@ export const decideRouting = (
         tier = 'high';
         reasoning = 'Kept the planning-phase bias because the conversation still looks exploratory.';
       } else if (
-        toolResultCount > 0 ||
         previousDecision?.phase === 'implementation' ||
         recentConversation.includes('plan:')
       ) {
         phase = 'implementation';
         tier = 'medium';
         const reasons: string[] = [];
-        if (toolResultCount > 0) {
-          reasons.push(`active implementation work based on ${toolResultCount} prior tool results`);
-        }
         if (previousDecision?.phase === 'implementation') {
           reasons.push('continuation of implementation phase');
         }
