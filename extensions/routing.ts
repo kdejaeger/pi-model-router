@@ -380,7 +380,6 @@ ${currentPhase === 'planning' ? 'Consider that the conversation is currently in 
 ${currentPhase === 'implementation' ? 'Consider that the conversation is currently in an implementation phase. Bias toward "medium" unless the request is clearly planning or a simple summary.' : ''}`;
 
     const classifierContext: Context = {
-      ...context,
       messages: [{ role: 'user', content: classifierPrompt, timestamp: Date.now() }],
     };
 
