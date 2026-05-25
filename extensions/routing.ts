@@ -245,13 +245,11 @@ export const decideRouting = (
       if (containsAny(prompt, explicitHighHints)) {
         phase = 'planning';
         tier = 'high';
-        reasoning =
-          'Detected an explicit request for deeper or higher-quality reasoning.';
+        reasoning = 'Detected an explicit request for deeper or higher-quality reasoning.';
       } else if (containsAny(prompt, explicitLowHints)) {
         phase = 'lightweight';
         tier = 'low';
-        reasoning =
-          'Detected an explicit request for a faster or lighter response.';
+        reasoning = 'Detected an explicit request for a faster or lighter response.';
       } else if (containsAny(prompt, summaryKeywords)) {
         phase = 'lightweight';
         tier = 'low';
@@ -271,8 +269,7 @@ export const decideRouting = (
       } else if (containsAny(prompt, implementationKeywords)) {
         phase = 'implementation';
         tier = 'medium';
-        reasoning =
-          'Detected implementation-oriented work with bounded execution scope.';
+        reasoning = 'Detected implementation-oriented work with bounded execution scope.';
       } else if (
         containsAny(prompt, lookupKeywords) &&
         wordCount <= 24 &&
@@ -288,8 +285,7 @@ export const decideRouting = (
       ) {
         phase = 'planning';
         tier = 'high';
-        reasoning =
-          'Kept the planning-phase bias because the conversation still looks exploratory.';
+        reasoning = 'Kept the planning-phase bias because the conversation still looks exploratory.';
       } else if (
         toolResultCount > 0 ||
         previousDecision?.phase === 'implementation' ||
