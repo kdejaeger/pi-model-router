@@ -280,23 +280,15 @@ export const registerRouterProvider = (
               const triggers: string[] = [];
               if (contCount <= confInitN) triggers.push(`init(≤${confInitN})`);
               if (failCount >= confFailN) triggers.push(`fail(${failCount}≥${confFailN})`);
-
-              // Cadence: crossed a boundary since last classifier run
-              const lastCad = lastDecision?.classifierContCount ?? 0;
+              const lastCad = lastDecision?.classifierContCount ?? 0; // Cadence: crossed a boundary since last classifier run
               if (confCadence > 0 && Math.floor(contCount / confCadence) > Math.floor(lastCad / confCadence)) {
                 triggers.push(`cadence(%${confCadence})`);
               }
               if (state.debugEnabled && state.lastExtensionContext) {
                 if (triggers.length > 0) {
-                  state.lastExtensionContext.ui.notify(
-                    `RUN classifier — ${triggers.join(', ')} (cont:${contCount})`,
-                    'info',
-                  );
+                  state.lastExtensionContext.ui.notify(`RUN classifier — ${triggers.join(', ')} (cont:${contCount})`, 'info');
                 } else {
-                  state.lastExtensionContext.ui.notify(
-                    `SKIP classifier (cont:${contCount}, fail:${failCount})`,
-                    'info',
-                  );
+                  state.lastExtensionContext.ui.notify(`SKIP classifier (cont:${contCount}, fail:${failCount})`, 'info');
                 }
               }
               return triggers.length > 0;
