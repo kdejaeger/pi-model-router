@@ -244,11 +244,11 @@ export const registerRouterProvider = (
 
           // ── Turn-level classifier gating ──
           const lastMessage = context.messages[context.messages.length - 1];
-          const isToolContinuation = lastMessage?.role === 'toolResult';
+          const lastMsgWasTool = lastMessage?.role === 'toolResult';
 
           // Google thinking lock — preserve exact model on tool-result continuations
           const isGoogleContinuation =
-            isToolContinuation &&
+            lastMsgWasTool &&
             lastDecision?.profile === model.id &&
             lastDecision?.targetProvider === 'google' &&
             lastDecision?.thinking !== 'off';
@@ -269,8 +269,8 @@ export const registerRouterProvider = (
             const contCount = countToolResultsSinceLastUserPrompt(context);
             const shouldRunClassifier = (() => {
               if (!classifierModel) return false;
-              if (!isToolContinuation) return true;
               if (pinnedTier || decision.isContextTriggered || decision.isRuleMatched) return false;
+              if (!lastMsgWasTool) return true;
 
               const failCount = countConsecutiveRecentToolFailures(context);
               const confInitN = currentConfig.classifierInitialContinuations ?? 1;
