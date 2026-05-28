@@ -146,20 +146,20 @@ There are two unrelated uses of `"auto"` in this project: (1) as a **profile nam
 
 ### Configuration Fields
 
-| Field | Type | Default      | Description |
-|---|---|--------------|---|
-| `debug` | `boolean` | `false`      | Enable debug mode. Equivalent to running `/router debug on` at startup. |
-| `defaultProfile` | `string` | `"auto"`     | The profile to activate by default when the router starts. Must match a key in `profiles`. See [Activating the Router](#activating-the-router) for how to make the router active on session start. |
-| `classifierModel` | `string` | --           | **Optional.** A fast model ref (e.g. `google/gemini-flash-latest`) used to classify user intent via LLM, overriding heuristic-based routing. Omit to use fast local heuristics only. |
+| Field | Type | Default      | Description                                                                                                                                                                                                                                                                         |
+|---|---|--------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `debug` | `boolean` | `false`      | Enable debug mode. Equivalent to running `/router debug on` at startup.                                                                                                                                                                                                             |
+| `defaultProfile` | `string` | `"auto"`     | The profile to activate by default when the router starts. Must match a key in `profiles`. See [Activating the Router](#activating-the-router) for how to make the router active on session start.                                                                                  |
+| `classifierModel` | `string` | --           | **Optional.** A fast model ref (e.g. `google/gemini-flash-latest`) used to classify user intent via LLM, overriding heuristic-based routing. Omit to use fast local heuristics only.                                                                                                |
 | `classifierModelThinking` | `ThinkingLevel` | `off`        | **Optional.** Reasoning/thinking level used when calling the classifier model. Defaults to `off` (no extended reasoning) to keep classifier calls fast and cheap. Set to `low`, `medium`, or `high` if the classifier needs more reasoning to make more accurate routing decisions. |
-| `classifierInitialContinuations` | `number` | `1`          | **Optional.** Run the classifier on the first N tool-result continuations after a new user message. Captures the assistant's initial feedback for better tier alignment. Default: 1. Set to 0 to disable. |
-| `classifierFailureTrigger` | `number` | `2`          | **Optional.** Run the classifier when this many **consecutive** tool results have failed (counting from the tail). Resets to 0 on any successful tool result. Default: 2. |
-| `classifierCadence` | `number` | `10`         | **Optional.** Run the classifier every N tool continuations as a periodic re-check. Default: 8. Set to 0 to disable cadence-based gating. |
-| `phaseBias` | `number` (0.0-1.0) | `0.5`        | Stickiness of the current routing phase. Higher values keep the router in the same tier longer during multi-turn conversations. |
-| `largeContextThreshold` | `number` | --           | **Optional.** Token count threshold. If session context usage exceeds this value, the router forces `high` tier regardless of other factors. |
-| `maxSessionBudget` | `number` (USD) | --           | **Optional.** Maximum session spend in USD. Once exceeded, all `high` tier requests are automatically downgraded to `medium`. |
-| `rules` | `array` | --           | **Optional.** List of keyword-based routing rules (see [Custom Rules](#custom-rules)). |
-| `profiles` | `object` | _(required)_ | Map of profile definitions. |
+| `classifierInitialContinuations` | `number` | `2`          | **Optional.** Run the classifier on the first N tool-result continuations after a new user message. Captures the assistant's initial feedback for better tier alignment. Default: 2. Set to 0 to disable.                                                                           |
+| `classifierFailureTrigger` | `number` | `2`          | **Optional.** Run the classifier when this many **consecutive** tool results have failed (counting from the tail). Resets to 0 on any successful tool result. Default: 2.                                                                                                           |
+| `classifierCadence` | `number` | `10`         | **Optional.** Run the classifier every N tool continuations as a periodic re-check. Default: 10 Set to 0 to disable cadence-based gating.                                                                                                                                           |
+| `phaseBias` | `number` (0.0-1.0) | `0.5`        | Stickiness of the current routing phase. Higher values keep the router in the same tier longer during multi-turn conversations.                                                                                                                                                     |
+| `largeContextThreshold` | `number` | --           | **Optional.** Token count threshold. If session context usage exceeds this value, the router forces `high` tier regardless of other factors.                                                                                                                                        |
+| `maxSessionBudget` | `number` (USD) | --           | **Optional.** Maximum session spend in USD. Once exceeded, all `high` tier requests are automatically downgraded to `medium`.                                                                                                                                                       |
+| `rules` | `array` | --           | **Optional.** List of keyword-based routing rules (see [Custom Rules](#custom-rules)).                                                                                                                                                                                              |
+| `profiles` | `object` | _(required)_ | Map of profile definitions.                                                                                                                                                                                                                                                         |
 
 ### Profile Definitions
 
@@ -392,7 +392,7 @@ When the router has an LLM classifier configured (`classifierModel`), it doesn't
 | Gate | Trigger                                                                                     | Reason |
 |---|---------------------------------------------------------------------------------------------|---|
 | **Google lock** | Previous model was Google with thinking, and this is a tool-result continuation             | Freezes to the same model — any change breaks thought-signature replay |
-| **Fresh feedback** | Tool-continuation count within current turn ≤ `classifierInitialContinuations` (default: 1) | Captures the assistant's first response + tool result after a new user message |
+| **Fresh feedback** | Tool-continuation count within current turn ≤ `classifierInitialContinuations` (default: 2) | Captures the assistant's first response + tool result after a new user message |
 | **Crisis** | Consecutive failed tool results (from the tail) ≥ `classifierFailureTrigger` (default: 2)   | Model is struggling — reclassify to potentially upgrade tier |
 | **Cadence** | Tool-continuation count % `classifierCadence` === 0 (default: 10)                           | Periodic re-check for long-running turns where initial assessment might be stale |
 

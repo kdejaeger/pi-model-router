@@ -273,7 +273,7 @@ export const registerRouterProvider = (
               if (!lastMsgWasTool) return true;
 
               const failCount = countConsecutiveRecentToolFailures(context);
-              const confInitN = currentConfig.classifierInitialContinuations ?? 1;
+              const confInitN = currentConfig.classifierInitialContinuations ?? 2;
               const confFailN = currentConfig.classifierFailureTrigger ?? 2;
               const confCadence = currentConfig.classifierCadence ?? 10;
 
@@ -483,6 +483,7 @@ export const registerRouterProvider = (
               break;
             } catch (err) {
               lastError = err;
+              state.lastExtensionContext?.ui.notify( `Failed to delegate to model ${modelRef}: ${err}`,  'warning');
             }
           }
 

@@ -62,10 +62,7 @@ export const registerCommands = (
     { name: 'pin', desc: 'Pin routing for a profile to a specific tier' },
     { name: 'thinking', desc: 'Override thinking level for a tier or profile' },
     { name: 'disable', desc: 'Disable the router and restore last model' },
-    {
-      name: 'fix',
-      desc: 'Correct the last routing decision and pin that tier',
-    },
+    { name: 'fix', desc: 'Correct the last routing decision and pin that tier'},
     { name: 'widget', desc: 'Toggle the router status widget' },
     { name: 'debug', desc: 'Toggle or clear router debug history' },
     { name: 'reload', desc: 'Reload the model router configuration' },
@@ -412,6 +409,7 @@ export const registerCommands = (
     }
 
     actions.persistState();
+    pi.setThinkingLevel(nextLevel || 'off');
     actions.updateStatus(ctx);
     ctx.ui.notify(
       nextLevel
