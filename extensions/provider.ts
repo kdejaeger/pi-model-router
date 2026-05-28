@@ -340,6 +340,9 @@ export const registerRouterProvider = (
 
           const detectedImageInRecentContext = imageDetectedInRecentContext(context);
           if (detectedImageInRecentContext) {
+            if (state.debugEnabled && state.lastExtensionContext) {
+                state.lastExtensionContext.ui.notify('Image detected in recent context, checking fallback models', 'info');
+            }
             const tierModels = [decision.targetLabel, ...(profile[decision.tier].fallbacks ?? [])];
             if (!tierModels.some(checkModelSupportsImage)) {
               const tiersToTry: RouterTier[] =
