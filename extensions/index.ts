@@ -266,10 +266,7 @@ const routerExtension = (pi: ExtensionAPI) => {
 
   actions.reloadConfig();
 
-  const restoreStateFromSession = async (
-    ctx: ExtensionContext,
-    sessionStartReason: string,
-  ) => {
+  const restoreStateFromSession = async (ctx: ExtensionContext) => {
     lastExtensionContext = ctx;
     currentModelRegistry = ctx.modelRegistry;
     currentCwd = ctx.cwd;
@@ -406,7 +403,7 @@ const routerExtension = (pi: ExtensionAPI) => {
 
   pi.on('session_start', async (event, ctx) => {
     isInitialized = true;
-    await restoreStateFromSession(ctx, event.reason);
+    await restoreStateFromSession(ctx);
 
     if (lastConfigWarnings.length > 0) {
       ctx.ui.notify(`Router config warnings:\n${lastConfigWarnings.join('\n')}`, 'warning');
