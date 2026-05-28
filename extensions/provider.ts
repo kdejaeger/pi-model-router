@@ -325,6 +325,8 @@ export const registerRouterProvider = (
                 state.lastExtensionContext.ui.notify('Classifier returned no result — using heuristics', 'warning');
               }
               decision.classifierContCount = contCount;
+            } else {
+              decision.classifierContCount = lastDecision?.classifierContCount; // Preserve the cadence counter from the previous decision
             }
           }
 
