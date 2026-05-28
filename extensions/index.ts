@@ -201,6 +201,7 @@ const routerExtension = (pi: ExtensionAPI) => {
       selectedProfile = resolvedProfile;
       routerEnabled = true;
       persistState();
+      pi.setThinkingLevel('off')
       actions.updateStatus(ctx);
       return true;
     },

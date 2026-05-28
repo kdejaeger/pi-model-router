@@ -448,6 +448,7 @@ export const registerCommands = (
     }
     state.routerEnabled = false;
     actions.persistState();
+    pi.setThinkingLevel('off');
     actions.updateStatus(ctx);
     ctx.ui.notify(
       `Router disabled. Restored ${state.lastNonRouterModel}`,

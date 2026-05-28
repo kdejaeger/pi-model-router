@@ -429,6 +429,7 @@ export const registerRouterProvider = (
                   ? (thinkingOverride ?? decision.thinking)
                   : undefined;
 
+              pi.setThinkingLevel(delegatedReasoning ?? 'off');
               if (state.lastExtensionContext) {
                 if (delegatedReasoning) {
                   state.lastExtensionContext.ui.setHiddenThinkingLabel?.(
