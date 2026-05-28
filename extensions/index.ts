@@ -326,20 +326,6 @@ const routerExtension = (pi: ExtensionAPI) => {
       accumulatedCost = savedState.accumulatedCost ?? 0;
     }
 
-    // If no persisted state was found and enableOnNewSession is true,
-    // enable the router with defaultProfile for fresh sessions.
-    if (
-      !isRouterPersistedState(savedState) &&
-      currentConfig.enableOnNewSession &&
-      (sessionStartReason === 'startup' || sessionStartReason === 'new')
-    ) {
-      routerEnabled = true;
-      selectedProfile = resolveProfileName(
-        currentConfig,
-        currentConfig.defaultProfile,
-      );
-    }
-
     await actions.ensureValidActiveRouterProfile(ctx);
 
     if (routerEnabled) {

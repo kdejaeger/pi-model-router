@@ -18,7 +18,6 @@ export const FALLBACK_CONFIG: RouterConfig = {
   defaultProfile: 'auto',
   debug: false,
   classifierModelThinking: 'off',
-  enableOnNewSession: false,
   profiles: {
     auto: {
       high: { model: 'openai/gpt-5.4-pro', thinking: 'off' },
@@ -28,14 +27,7 @@ export const FALLBACK_CONFIG: RouterConfig = {
   },
 };
 
-export const THINKING_LEVELS: readonly ThinkingLevel[] = [
-  'off',
-  'minimal',
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-];
+export const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 export const ROUTER_PIN_VALUES = ['auto', 'high', 'medium', 'low'] as const;
 
 export const isObjectRecord = (
@@ -99,8 +91,6 @@ export const mergeConfig = (
   return {
     defaultProfile: override.defaultProfile ?? base.defaultProfile,
     debug: override.debug ?? base.debug,
-    enableOnNewSession:
-      override.enableOnNewSession ?? base.enableOnNewSession,
     classifierModel: override.classifierModel ?? base.classifierModel,
     classifierModelThinking:
       override.classifierModelThinking ?? base.classifierModelThinking,
@@ -310,10 +300,6 @@ export const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
     config: {
       defaultProfile,
       debug: typeof raw.debug === 'boolean' ? raw.debug : false,
-      enableOnNewSession:
-        typeof raw.enableOnNewSession === 'boolean'
-          ? raw.enableOnNewSession
-          : false,
       classifierModel,
       classifierModelThinking,
       phaseBias,

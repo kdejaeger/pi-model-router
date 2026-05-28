@@ -275,7 +275,7 @@ export const registerRouterProvider = (
               const failCount = countConsecutiveRecentToolFailures(context);
               const confInitN = currentConfig.classifierInitialContinuations ?? 1;
               const confFailN = currentConfig.classifierFailureTrigger ?? 2;
-              const confCadence = currentConfig.classifierCadence ?? 8;
+              const confCadence = currentConfig.classifierCadence ?? 10;
 
               const triggers: string[] = [];
               if (contCount <= confInitN) triggers.push(`init(≤${confInitN})`);
