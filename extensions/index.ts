@@ -163,18 +163,12 @@ const routerExtension = (pi: ExtensionAPI) => {
       const routerModel = ctx.modelRegistry.find('router', fallbackProfile);
       selectedProfile = fallbackProfile;
       if (!routerModel) {
-        ctx.ui.notify(
-          `Router profile "${ctx.model.id}" is no longer configured.`,
-          'warning',
-        );
+        ctx.ui.notify(`Router profile "${ctx.model.id}" is no longer configured.`, 'warning');
         return;
       }
 
       await setModelInternally(routerModel);
-      ctx.ui.notify(
-        `Router profile "${ctx.model.id}" is no longer configured. Switched to router/${fallbackProfile}.`,
-        'warning',
-      );
+      ctx.ui.notify(`Router profile "${ctx.model.id}" is no longer configured. Switched to router/${fallbackProfile}.`, 'warning');
     },
     switchToRouterProfile: async (
       profileName: string,
@@ -207,6 +201,7 @@ const routerExtension = (pi: ExtensionAPI) => {
       selectedProfile = resolvedProfile;
       routerEnabled = true;
       persistState();
+      pi.setThinkingLevel('off')
       actions.updateStatus(ctx);
       return true;
     },
@@ -254,6 +249,9 @@ const routerExtension = (pi: ExtensionAPI) => {
           },
           set accumulatedCost(v) {
             accumulatedCost = v;
+          },
+          get debugEnabled() {
+            return debugEnabled;
           },
         },
         {
@@ -329,20 +327,6 @@ const routerExtension = (pi: ExtensionAPI) => {
       accumulatedCost = savedState.accumulatedCost ?? 0;
     }
 
-    // If no persisted state was found and enableOnNewSession is true,
-    // enable the router with defaultProfile for fresh sessions.
-    if (
-      !isRouterPersistedState(savedState) &&
-      currentConfig.enableOnNewSession &&
-      (sessionStartReason === 'startup' || sessionStartReason === 'new')
-    ) {
-      routerEnabled = true;
-      selectedProfile = resolveProfileName(
-        currentConfig,
-        currentConfig.defaultProfile,
-      );
-    }
-
     await actions.ensureValidActiveRouterProfile(ctx);
 
     if (routerEnabled) {
@@ -350,17 +334,11 @@ const routerExtension = (pi: ExtensionAPI) => {
       if (routerModel) {
         const success = await setModelInternally(routerModel);
         if (!success) {
-          ctx.ui.notify(
-            `Failed to restore router/${selectedProfile} after relaunch.`,
-            'warning',
-          );
+          ctx.ui.notify(`Failed to restore router/${selectedProfile} after relaunch.`, 'warning');
           routerEnabled = false;
         }
       } else {
-        ctx.ui.notify(
-          `Unable to restore router/${selectedProfile}; model is unavailable.`,
-          'warning',
-        );
+        ctx.ui.notify(`Unable to restore router/${selectedProfile}; model is unavailable.`, 'warning');
         routerEnabled = false;
         ctx.ui.setHiddenThinkingLabel?.();
       }
@@ -431,10 +409,7 @@ const routerExtension = (pi: ExtensionAPI) => {
     await restoreStateFromSession(ctx, event.reason);
 
     if (lastConfigWarnings.length > 0) {
-      ctx.ui.notify(
-        `Router config warnings:\n${lastConfigWarnings.join('\n')}`,
-        'warning',
-      );
+      ctx.ui.notify(`Router config warnings:\n${lastConfigWarnings.join('\n')}`, 'warning');
     }
 
     if (debugEnabled) {
