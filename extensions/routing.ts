@@ -404,12 +404,12 @@ export const runClassifier = async (
     const historyText = getRecentConversationText(context, 4);
     const promptText = getLastUserText(context);
 
-    const classifierPrompt = `You are a model router classifier. Your job is to categorize the user's latest request into one of three tiers: "high", "medium", or "low".
+    const classifierPrompt = `You are a model router classifier. Your job is to categorize the user's latest request into one of three tiers: "high", "medium", or "low". 
 
 Tiers:
-- high: Complex reasoning, architectural design, multi-step planning, tradeoff analysis, or resolving deep-rooted bugs that require a holistic understanding of the project.
-- medium: Standard coding tasks, implementing well-defined features, multi-file edits, focused debugging, and writing tests within an established pattern.
-- low: Routine tasks requiring no or minimal reasoning, such as summaries, changelogs, formatting, quick explanations, simple lookups, or small, bounded text transforms.
+- high: Complex reasoning, architectural design, multi-step planning, tradeoff analysis, or resolving deep-rooted bugs that require a holistic understanding of the project. The high tier usually contains the most expensive models with highest thinking requirements and biggest context windows.
+- medium: Standard coding tasks, implementing well-defined features, multi-file edits, focused debugging, and writing tests within an established pattern. The medium tier usually contains balanced models with medium to high thinking requirements.
+- low: Routine tasks requiring no or minimal reasoning, such as summaries, changelogs, formatting, quick explanations, simple lookups, or small, bounded text transforms. The low tier usually contains cheaper models with no to low thinking requirements.
 
 Recent history & tool results (The Context):
 ${historyText}
