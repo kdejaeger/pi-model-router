@@ -208,15 +208,18 @@ The config system performs thorough validation on reload/startup and surfaces wa
 
 ## Activating the Router
 
-When you define profiles in your config, the router registers each profile as a model with the `router` provider (e.g., `router/balanced`, `router/cheap`). These models appear in pi's model list and are available for selection.
+When you define profiles in your config, each profile is registered as a model with the `router` provider — e.g., `router/balanced`, `router/cheap`. These models appear in pi's model list and are available for selection in pi's model switcher, just like any other model.
 
-### 1. On new session
+### 1. Persistent activation (on session start)
 
-Add the model to the pi's scoped models and define it in `model-router.json` -> `defaultProfile`. Then the router activates automatically on new sessions with your defined `defaultModel`. For example if you define a `balanced` profile, add `"router/balanced"` to your scoped models list. Then in `model-router.json`, set `defaultModel` to `balanced`. 
+To have the router activate automatically every time pi starts:
 
-### 2. Switch to a router profile at runtime
+1. Add the router model(s) to pi's **scoped models list** in your pi configuration (e.g., add `"router/balanced"`).
+2. Set `"defaultProfile": "balanced"` in `model-router.json` so the router knows which profile to use.
 
-Once the extension is loaded, run `/router profile <name>` in any session to switch to a router profile. This activates, and will remember, the router profile for the current session.
+### 2. Runtime activation (current session only)
+
+Once the extension is loaded, run `/router profile <name>` to switch to a router profile. This activates and remembers the router profile for the current session.
 
 --- 
 
