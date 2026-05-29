@@ -2,11 +2,12 @@ import { streamSimple, type Context, type Message } from '@earendil-works/pi-ai'
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type {
   RouterTier,
-  RouterPhase,
   RouterProfile,
   RoutingDecision,
   RoutingRule,
   RouterThinkingByTier,
+  HeuristicAnalysis,
+  RouterConfig,
 } from './types';
 import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
 import { parseCanonicalModelRef, isRouterTier } from './config';
@@ -118,148 +119,94 @@ export const containsAny = (text: string, keywords: string[]): boolean => {
   return keywords.some((keyword) => text.includes(keyword));
 };
 
-export const phaseForTier = (tier: RouterTier): RouterPhase => {
-  if (tier === 'high') return 'planning';
-  if (tier === 'medium') return 'implementation';
-  return 'lightweight';
-};
+const EXPLICIT_HIGH_HINTS = [
+  'best', 'deep', 'deeply', 'carefully', 'thoroughly', 'robust',
+  'comprehensive', 'step by step', 'think hard', 'highest quality',
+];
+const EXPLICIT_LOW_HINTS = [
+  'fast', 'cheap', 'quick', 'quickly', 'brief', 'briefly',
+  'one sentence', 'one line', 'tiny', 'small',
+];
+const PLANNING_KEYWORDS = [
+  'plan', 'planning', 'architecture', 'architect', 'design', 'tradeoff', 'trade-off',
+  'research', 'investigate', 'root cause', 'analyze', 'analysis',
+  'migration', 'strategy', 'compare', 'options', 'approach',
+];
+const SUMMARY_KEYWORDS = [
+  'summarize', 'summary', 'changelog', 'rewrite', 'reformat', 'format',
+  'rename', 'explain briefly', 'recap', 'tl;dr',
+];
+const IMPLEMENTATION_KEYWORDS = [
+  'implement', 'code', 'fix', 'update', 'edit', 'write', 'refactor',
+  'add tests', 'patch', 'change', 'apply', 'continue', 'resume',
+  'make the changes', 'go ahead',
+];
+const LOOKUP_KEYWORDS = [
+  'where is', 'which file', 'show me', 'list', 'what files', 'find', 'grep',
+];
 
 export const buildRoutingDecision = (
   profileName: string,
   profile: RouterProfile,
   tier: RouterTier,
-  phase: RouterPhase,
   reasoning: string,
   thinkingOverrides?: RouterThinkingByTier,
   isClassifier?: boolean,
+  lastClassifierRunToolCount?: number,
+  heuristicResult?: HeuristicAnalysis,
 ): RoutingDecision => {
-  const routed = profile[tier];
-  const { provider, modelId } = parseCanonicalModelRef(routed.model);
-  const baseThinking =
-    routed.thinking ??
-    (tier === 'high' ? 'high' : tier === 'low' ? 'low' : 'medium');
+  const routedTierConf = profile[tier];
+  const { provider, modelId } = parseCanonicalModelRef(routedTierConf.model);
+  let baseThinking: ThinkingLevel;
+  if (routedTierConf.thinking != null) {
+    baseThinking = routedTierConf.thinking;
+  } else if (tier === 'high') {
+    baseThinking = 'high';
+  } else if (tier === 'low') {
+    baseThinking = 'low';
+  } else {
+    baseThinking = 'medium';
+  }
   const effectiveThinking = thinkingOverrides?.[tier] ?? baseThinking;
 
   return {
     profile: profileName,
     tier,
-    phase,
     targetProvider: provider,
     targetModelId: modelId,
-    targetLabel: routed.model,
+    targetLabel: routedTierConf.model,
     reasoning,
     thinking: effectiveThinking,
     timestamp: Date.now(),
     isClassifier,
+    lastClassifierRunToolCount,
+    isRuleMatched: heuristicResult?.isRuleMatched,
+    isBudgetForced: heuristicResult?.isBudgetForced,
   };
 };
 
-export const decideRouting = (
+/**
+ * Analyze a user prompt and conversation context using local heuristics.
+ * 
+ * When a classifier model is configured, this analysis is used as advisory input
+ * for the LLM classifier (the classifier has final say). When no classifier is
+ * configured, the heuristic analysis directly becomes the routing decision.
+ */
+export const analyzePrompt = (
   context: Context,
-  profileName: string,
-  profile: RouterProfile,
   previousDecision: RoutingDecision | undefined,
   pinnedTier?: RouterTier,
-  thinkingOverrides?: RouterThinkingByTier,
   phaseBias = 0.5,
   rules?: RoutingRule[],
   isBudgetExceeded = false,
-): RoutingDecision => {
+): HeuristicAnalysis => {
   const prompt = getLastUserText(context).toLowerCase();
-  const recentConversation = getRecentConversationText(context);
-  const toolResultCountSinceLastUserPrompt = countToolResultsSinceLastUserPrompt(context);
-  const wordCount = countWords(prompt);
-  const multiLinePrompt = prompt.split('\n').length >= 4;
 
-  const explicitHighHints = [
-    'best',
-    'deep',
-    'deeply',
-    'carefully',
-    'thoroughly',
-    'robust',
-    'comprehensive',
-    'step by step',
-    'think hard',
-    'highest quality',
-  ];
-  const explicitLowHints = [
-    'fast',
-    'cheap',
-    'quick',
-    'quickly',
-    'brief',
-    'briefly',
-    'one sentence',
-    'one line',
-    'tiny',
-    'small',
-  ];
-  const planningKeywords = [
-    'plan',
-    'planning',
-    'architecture',
-    'architect',
-    'design',
-    'tradeoff',
-    'trade-off',
-    'research',
-    'investigate',
-    'root cause',
-    'analyze',
-    'analysis',
-    'migration',
-    'strategy',
-    'compare',
-    'options',
-    'approach',
-  ];
-  const summaryKeywords = [
-    'summarize',
-    'summary',
-    'changelog',
-    'rewrite',
-    'reformat',
-    'format',
-    'rename',
-    'explain briefly',
-    'recap',
-    'tl;dr',
-  ];
-  const implementationKeywords = [
-    'implement',
-    'code',
-    'fix',
-    'update',
-    'edit',
-    'write',
-    'refactor',
-    'add tests',
-    'patch',
-    'change',
-    'apply',
-    'continue',
-    'resume',
-    'make the changes',
-    'go ahead',
-  ];
-  const lookupKeywords = [
-    'where is',
-    'which file',
-    'show me',
-    'list',
-    'what files',
-    'find',
-    'grep',
-  ];
-
-  let phase: RouterPhase = previousDecision?.phase ?? 'implementation';
   let tier: RouterTier = 'medium';
   let reasoning = 'Defaulted to medium tier for general coding work.';
   let isRuleMatched = false;
 
   if (pinnedTier) {
-    phase = phaseForTier(pinnedTier);
     tier = pinnedTier;
     reasoning = `Pinned to ${pinnedTier} tier via /router-pin.`;
   } else {
@@ -271,7 +218,6 @@ export const decideRouting = (
           : [rule.matches];
         if (containsAny(prompt, matches)) {
           tier = rule.tier;
-          phase = phaseForTier(tier);
           reasoning =
             rule.reason ??
             `Matched custom routing rule for: ${matches.join(', ')}`;
@@ -282,80 +228,85 @@ export const decideRouting = (
     }
 
     if (!isRuleMatched) {
-      // Sticky phase adjustments
+      // Sticky bias: lower thresholds when continuing in the same tier
       const highThreshold = Math.max(
         40,
-        120 - (previousDecision?.phase === 'planning' ? phaseBias * 80 : 0),
+        120 - (previousDecision?.tier === 'high' ? phaseBias * 80 : 0),
       );
       const lowThreshold = Math.max(
         4,
         12 -
-          (previousDecision?.phase === 'implementation' ||
-          previousDecision?.phase === 'planning'
+          (previousDecision?.tier === 'medium' ||
+          previousDecision?.tier === 'high'
             ? phaseBias * 8
             : 0),
       );
 
-      if (containsAny(prompt, explicitHighHints)) {
-        phase = 'planning';
+      const keywordHints = {
+        explicitHigh: containsAny(prompt, EXPLICIT_HIGH_HINTS),
+        explicitLow: containsAny(prompt, EXPLICIT_LOW_HINTS),
+        planning: containsAny(prompt, PLANNING_KEYWORDS),
+        implementation: containsAny(prompt, IMPLEMENTATION_KEYWORDS),
+        summary: containsAny(prompt, SUMMARY_KEYWORDS),
+        lookup: containsAny(prompt, LOOKUP_KEYWORDS),
+      };
+
+      const recentConversation = getRecentConversationText(context);
+      const toolResultCountSinceLastUserPrompt = countToolResultsSinceLastUserPrompt(context);
+      const wordCount = countWords(prompt);
+      const multiLinePrompt = prompt.split('\n').length >= 4;
+
+      if (keywordHints.explicitHigh) {
         tier = 'high';
         reasoning = 'Detected an explicit request for deeper or higher-quality reasoning.';
-      } else if (containsAny(prompt, explicitLowHints)) {
-        phase = 'lightweight';
+      } else if (keywordHints.explicitLow) {
         tier = 'low';
         reasoning = 'Detected an explicit request for a faster or lighter response.';
-      } else if (containsAny(prompt, summaryKeywords)) {
-        phase = 'lightweight';
+      } else if (keywordHints.summary) {
         tier = 'low';
         reasoning = 'Detected summary or lightweight transformation keywords.';
       } else if (
-        containsAny(prompt, planningKeywords) ||
+        keywordHints.planning ||
         prompt.startsWith('why ') ||
         wordCount >= highThreshold ||
         multiLinePrompt
       ) {
-        phase = 'planning';
         tier = 'high';
         reasoning =
-          previousDecision?.phase === 'planning'
-            ? 'Continued planning phase based on complexity or keywords.'
+          previousDecision?.tier === 'high'
+            ? 'Continued high tier based on complexity or keywords.'
             : 'Detected planning, broad analysis, or a high-complexity request.';
-      } else if (containsAny(prompt, implementationKeywords)) {
-        phase = 'implementation';
+      } else if (keywordHints.implementation) {
         tier = 'medium';
         reasoning = 'Detected implementation-oriented work with bounded execution scope.';
       } else if (
-        containsAny(prompt, lookupKeywords) &&
+        keywordHints.lookup &&
         wordCount <= 24 &&
         toolResultCountSinceLastUserPrompt === 0
       ) {
-        phase = 'lightweight';
         tier = 'low';
         reasoning = 'Detected a short read-only lookup request.';
       } else if (
-        previousDecision?.phase === 'planning' &&
+        previousDecision?.tier === 'high' &&
         toolResultCountSinceLastUserPrompt === 0 &&
         wordCount > lowThreshold
       ) {
-        phase = 'planning';
         tier = 'high';
-        reasoning = 'Kept the planning-phase bias because the conversation still looks exploratory.';
+        reasoning = 'Kept the high tier bias because the conversation still looks exploratory.';
       } else if (
-        previousDecision?.phase === 'implementation' ||
+        previousDecision?.tier === 'medium' ||
         recentConversation.includes('plan:')
       ) {
-        phase = 'implementation';
         tier = 'medium';
         const reasons: string[] = [];
-        if (previousDecision?.phase === 'implementation') {
-          reasons.push('continuation of implementation phase');
+        if (previousDecision?.tier === 'medium') {
+          reasons.push('continuation of medium tier');
         }
         if (recentConversation.includes('plan:')) {
           reasons.push('active plan detected in context');
         }
         reasoning = `Biasing to medium tier: ${reasons.join(', ')}.`;
       } else if (wordCount <= lowThreshold) {
-        phase = 'lightweight';
         tier = 'low';
         reasoning = 'Detected a short bounded request.';
       }
@@ -365,51 +316,48 @@ export const decideRouting = (
   let isBudgetForced = false;
   if (isBudgetExceeded && tier === 'high') {
     tier = 'medium';
-    phase = 'implementation';
     reasoning = `Budget exceeded. Downgraded from high to medium tier. (Original: ${reasoning})`;
     isBudgetForced = true;
   }
 
-  const decision = buildRoutingDecision(
-    profileName,
-    profile,
-    tier,
-    phase,
+  return {
+    suggestedTier: tier,
     reasoning,
-    thinkingOverrides,
-    false,
-  );
-  decision.isRuleMatched = isRuleMatched;
-  decision.isBudgetForced = isBudgetForced;
-  return decision;
+    isRuleMatched,
+    isBudgetForced
+  };
 };
 
-export const runClassifier = async (
-  classifierModelRef: string,
-  modelRegistry: ExtensionContext['modelRegistry'],
+/**
+ * Build enriched classifier prompt by including heuristic analysis as advisory context.
+ */
+export const buildClassifierPrompt = (
   context: Context,
-  currentPhase?: RouterPhase,
-  thinking?: ThinkingLevel,
-): Promise<{ tier: RouterTier; reasoning: string } | undefined> => {
-  try {
-    const { provider, modelId } = parseCanonicalModelRef(classifierModelRef);
-    const model = modelRegistry.find(provider, modelId);
-    if (!model) return undefined;
+  previousDecision: RoutingDecision | undefined,
+  heuristicAnalysis?: HeuristicAnalysis,
+): string => {
+  const historyText = getRecentConversationText(context);
+  const promptText = getLastUserText(context);
 
-    const auth = await modelRegistry.getApiKeyAndHeaders(model);
-    if (!auth.ok || !auth.apiKey) return undefined;
-    const apiKey = auth.apiKey;
-    const headers = auth.headers;
+  let heuristicSection = '';
+  if (heuristicAnalysis) {
+    heuristicSection = `Heuristic analysis (advisory — you may override):
+  Heuristic suggested tier: ${heuristicAnalysis.suggestedTier}
+  Heuristic reasoning: ${heuristicAnalysis.reasoning}`;
+  }
 
-    const historyText = getRecentConversationText(context);
-    const promptText = getLastUserText(context);
+  const previousTierLine = previousDecision?.tier ? `Previous tier: ${previousDecision.tier}` : '';
 
-    const classifierPrompt = `You are a model router classifier. Your job is to categorize the user's latest request into one of three tiers: "high", "medium", or "low". 
+  return `You are a model router classifier. Your job is to categorize the user's latest request into one of three tiers: "high", "medium", or "low". 
 
 Tiers:
-- high: Complex reasoning, architectural design, multi-step planning, tradeoff analysis, or resolving deep-rooted bugs that require a holistic understanding of the project. The high tier usually contains the most expensive models with highest thinking requirements and biggest context windows.
+- high: Extremely complex reasoning, architectural design, multi-step planning, tradeoff analysis, or resolving deep-rooted bugs. The high tier usually contains the most expensive models with highest thinking requirements and biggest context windows.
 - medium: Standard coding tasks, implementing well-defined features, multi-file edits, focused debugging, and writing tests within an established pattern. The medium tier usually contains balanced models with medium to high thinking requirements.
-- low: Routine tasks requiring no or minimal reasoning, such as summaries, renaming, changelogs, formatting, quick explanations, simple lookups, or other small bounded text transforms. The low tier usually contains cheaper models with no to low thinking requirements.
+- low: Routine tasks requiring no or minimal reasoning, such as summaries, renaming, changelogs, formatting, quick explanations, lookups, or other small bounded text transforms. The low tier usually contains cheaper models with no to low thinking requirements.
+
+${previousTierLine}
+
+${heuristicSection}
 
 Recent history & tool results (The Context):
 ${historyText}
@@ -419,46 +367,63 @@ ${promptText}
 
 Return your decision in exactly two lines:
 Tier: [high|medium|low]
-Reasoning: [one concise sentence summarizing the request's complexity and why it fits the tier]
+Reasoning: [one concise sentence summarizing the request's complexity and why it fits the tier]`;
+};
 
-${currentPhase ? `Current conversation phase: ${currentPhase}` : ''}
-${currentPhase === 'planning' ? 'Consider that the conversation is currently in a planning phase. Bias toward "high" unless the request is clearly a simple implementation or summary.' : ''}
-${currentPhase === 'implementation' ? 'Consider that the conversation is currently in an implementation phase. Bias toward "medium" unless the request is clearly planning or a simple summary.' : ''}`;
+export const runClassifier = async (
+  currentConfig: RouterConfig,
+  modelRegistry: ExtensionContext['modelRegistry'],
+  context: Context,
+  previousDecision: RoutingDecision | undefined,
+  heuristicAnalysis?: HeuristicAnalysis,
+): Promise<{ tier: RouterTier; reasoning: string } | undefined> => {
+  try {
+    if (!currentConfig.classifierModel) return undefined;
+    const { provider, modelId } = parseCanonicalModelRef(currentConfig.classifierModel);
+    const thinking = currentConfig.classifierModelThinking;
+    const model = modelRegistry.find(provider, modelId);
+    if (!model) return undefined;
 
-    const classifierContext: Context = {
-      messages: [{ role: 'user', content: classifierPrompt, timestamp: Date.now() }],
-    };
+    const auth = await modelRegistry.getApiKeyAndHeaders(model);
+    if (!auth.ok || !auth.apiKey) return undefined;
 
-    const stream = streamSimple(model, classifierContext, {
-      apiKey,
-      headers,
-      ...(thinking && thinking !== 'off' ? { reasoning: thinking } : {}),
-    });
-    let fullText = '';
-    for await (const event of stream) {
-      if (
-        event.type === 'text_delta' &&
-        typeof (event as any).delta === 'string'
-      ) {
-        fullText += (event as any).delta;
-      }
-    }
+    const classifierPrompt = buildClassifierPrompt(context, previousDecision, heuristicAnalysis);
+    const classifierContext: Context = { messages: [{ role: 'user', content: classifierPrompt, timestamp: Date.now() }] };
 
-    const lines = fullText.trim().split('\n');
-    const tierLine = lines.find((l) => l.toLowerCase().startsWith('tier:'));
-    const reasoningLine = lines.find((l) =>
-      l.toLowerCase().startsWith('reasoning:'),
-    );
+    const MAX_CLASSIFIER_RETRIES = 2;
+    for (let attempt = 1; attempt <= MAX_CLASSIFIER_RETRIES; attempt++) {
+      try {
+        const stream = streamSimple(model, classifierContext, {
+          apiKey: auth.apiKey,
+          headers: auth.headers,
+          ...(thinking && thinking !== 'off' ? { reasoning: thinking } : {}),
+        });
+        let fullText = '';
+        for await (const event of stream) {
+          if (event.type === 'text_delta' && typeof (event as any).delta === 'string') {
+            fullText += (event as any).delta;
+          }
+        }
 
-    if (tierLine) {
-      const tierValue = tierLine.split(':')[1].trim().toLowerCase();
-      if (isRouterTier(tierValue)) {
-        return {
-          tier: tierValue,
-          reasoning: reasoningLine
-            ? reasoningLine.split(':')[1].trim()
-            : 'Classifier decision.',
-        };
+        const lines = fullText.trim().split('\n');
+        const tierLine = lines.find((l) => l.toLowerCase().startsWith('tier:'));
+        const reasoningLine = lines.find((l) => l.toLowerCase().startsWith('reasoning:'));
+
+        if (tierLine) {
+          const tierValue = tierLine.split(':')[1].trim().toLowerCase();
+          if (isRouterTier(tierValue)) {
+            return {
+              tier: tierValue,
+              reasoning: reasoningLine ? reasoningLine.split(':')[1].trim() : 'Classifier decision.',
+            };
+          }
+        }
+      } catch (err) {
+        if (attempt < MAX_CLASSIFIER_RETRIES) {
+          // Retry on next iteration
+        } else {
+          throw err; // Last attempt failed — let outer catch handle it
+        }
       }
     }
   } catch (error) {

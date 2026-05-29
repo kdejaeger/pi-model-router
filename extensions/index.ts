@@ -16,11 +16,10 @@ import {
   loadRouterConfig,
   profileNames,
   resolveProfileName,
-  parseCanonicalModelRef,
 } from './config';
 import { MAX_DEBUG_HISTORY } from './constants';
 import { isRouterPersistedState, buildPersistedState } from './state';
-import { updateStatus, formatModelRef } from './ui';
+import { updateStatus } from './ui';
 import { registerCommands } from './commands';
 import { registerRouterProvider } from './provider';
 
@@ -56,21 +55,6 @@ const routerExtension = (pi: ExtensionAPI) => {
       return await pi.setModel(model);
     } finally {
       isInternalModelSwitch = false;
-    }
-  };
-
-  const getPinnedTierForProfile = (
-    profileName: string,
-  ): RouterTier | undefined => pinnedTierByProfile[profileName];
-
-  const setPinnedTierForProfile = (
-    profileName: string,
-    tier: RouterTier | undefined,
-  ) => {
-    if (tier) {
-      pinnedTierByProfile[profileName] = tier;
-    } else {
-      delete pinnedTierByProfile[profileName];
     }
   };
 
@@ -126,9 +110,7 @@ const routerExtension = (pi: ExtensionAPI) => {
         lastNonRouterModel,
         accumulatedCost,
         widgetEnabled,
-        currentConfig,
-        debugEnabled,
-        debugHistory,
+        currentConfig
       ),
     reloadConfig: (
       ctx?: ExtensionContext,

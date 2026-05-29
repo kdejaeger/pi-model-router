@@ -36,7 +36,7 @@ const formatRoutingDetails = (
 };
 
 export const formatDecision = (decision: RoutingDecision): string => {
-  return `${decision.profile}: ${decision.tier} -> ${decision.targetProvider}/${decision.targetModelId} (${decision.thinking}) - ${decision.reasoning}`;
+  return `${decision.profile} -> ${decision.tier} -> ${decision.targetProvider}/${decision.targetModelId} (${decision.thinking}) - ${decision.reasoning}`;
 };
 
 export const formatPinSummary = (
@@ -76,9 +76,7 @@ export const updateStatus = (
   lastNonRouterModel: string | undefined,
   accumulatedCost: number,
   widgetEnabled: boolean,
-  currentConfig: RouterConfig,
-  debugEnabled?: boolean,
-  debugHistory?: RoutingDecision[],
+  currentConfig: RouterConfig
 ) => {
   const activeRouterProfile = routerEnabled ? selectedProfile : undefined;
   const statusProfile = selectedProfile;
@@ -118,18 +116,12 @@ export const updateStatus = (
   if (lastDecision && lastDecision.profile === statusProfile) {
     widgetLines.push(
       `Route: ${formatRoutingDetails(lastDecision, thinkingByProfile)}`,
-      `Phase: ${lastDecision.phase}`,
     );
   } else if (!routerEnabled && lastNonRouterModel) {
     widgetLines.push(`Fallback: ${lastNonRouterModel}`);
   }
   if (Object.keys(pinnedTierByProfile).length > 1) {
     widgetLines.push(`Pins: ${formatPinSummary(pinnedTierByProfile)}`);
-  }
-  if (debugEnabled && debugHistory && debugHistory.length > 0) {
-    for (const d of [...debugHistory].reverse()) { // Most recent first so pi's truncation keeps the latest visible
-      widgetLines.push(`[debug-history] [${new Date(d.timestamp).toLocaleTimeString()}] ${formatDecision(d)}`,);
-    }
   }
 
   ctx.ui.setWidget(

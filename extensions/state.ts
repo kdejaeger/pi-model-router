@@ -40,7 +40,6 @@ export const buildPersistedState = (
     debugEnabled,
     widgetEnabled,
     debugHistory,
-    lastPhase: lastDecision?.phase,
     lastDecision,
     lastNonRouterModel,
     accumulatedCost,

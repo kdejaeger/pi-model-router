@@ -2,7 +2,6 @@ import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
 
 export type RouterTier = 'high' | 'medium' | 'low';
 export type RouterPin = RouterTier | 'auto';
-export type RouterPhase = 'planning' | 'implementation' | 'lightweight';
 export type RouterPinByProfile = Partial<Record<string, RouterTier>>;
 export type RouterThinkingByTier = Partial<Record<RouterTier, ThinkingLevel>>;
 export type RouterThinkingByProfile = Record<string, RouterThinkingByTier>;
@@ -43,7 +42,6 @@ export interface RouterConfig {
 export interface RoutingDecision {
   profile: string;
   tier: RouterTier;
-  phase: RouterPhase;
   targetProvider: string;
   targetModelId: string;
   targetLabel: string;
@@ -58,6 +56,13 @@ export interface RoutingDecision {
   lastClassifierRunToolCount?: number; // Tool-continuation count when the classifier last ran
 }
 
+export interface HeuristicAnalysis {
+  suggestedTier: RouterTier;
+  reasoning: string;
+  isRuleMatched: boolean;
+  isBudgetForced: boolean;
+}
+
 export interface RouterPersistedState {
   enabled: boolean;
   selectedProfile: string;
@@ -67,7 +72,6 @@ export interface RouterPersistedState {
   debugEnabled?: boolean;
   widgetEnabled?: boolean;
   debugHistory?: RoutingDecision[];
-  lastPhase?: RouterPhase;
   lastDecision?: RoutingDecision;
   lastNonRouterModel?: string;
   accumulatedCost?: number;

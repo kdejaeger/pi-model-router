@@ -146,20 +146,20 @@ There are two unrelated uses of `"auto"` in this project: (1) as a **profile nam
 
 ### Configuration Fields
 
-| Field | Type | Default      | Description                                                                                                                                                                                                                                                                         |
-|---|---|--------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `debug` | `boolean` | `false`      | Enable debug mode. Equivalent to running `/router debug on` at startup.                                                                                                                                                                                                             |
-| `defaultProfile` | `string` | `"auto"`     | The profile to activate by default when the router starts. Must match a key in `profiles`. See [Activating the Router](#activating-the-router) for how to make the router active on session start.                                                                                  |
-| `classifierModel` | `string` | --           | **Optional.** A fast model ref (e.g. `google/gemini-flash-latest`) used to classify user intent via LLM, overriding heuristic-based routing. Omit to use fast local heuristics only.                                                                                                |
-| `classifierModelThinking` | `ThinkingLevel` | `off`        | **Optional.** Reasoning/thinking level used when calling the classifier model. Defaults to `off` (no extended reasoning) to keep classifier calls fast and cheap. Set to `low`, `medium`, or `high` if the classifier needs more reasoning to make more accurate routing decisions. |
-| `classifierRunOnceAfterToolCount` | `number` | `3`          | **Optional.** Run the classifier once after this many tool continuations (first crossing, before cadence). Captures the assistant's initial feedback for better tier alignment. Default: 3. Set to 0 to disable.                                                                        |
-| `classifierRunAfterToolFailures` | `number` | `2`          | **Optional.** Run the classifier after this many **consecutive** tool failures (counting from the tail). Resets to 0 on any successful tool result. Default: 2.                                                                                                           |
-| `classifierCadence` | `number` | `10`         | **Optional.** Run the classifier every N tool continuations as a periodic re-check. Default: 10 Set to 0 to disable cadence-based gating.                                                                                                                                           |
-| `phaseBias` | `number` (0.0-1.0) | `0.5`        | Stickiness of the current routing phase. Higher values keep the router in the same tier longer during multi-turn conversations.                                                                                                                                                     |
-| `largeContextThreshold` | `number` | --           | **Optional.** Token count threshold. If session context usage exceeds this value, the router forces `high` tier regardless of other factors.                                                                                                                                        |
-| `maxSessionBudget` | `number` (USD) | --           | **Optional.** Maximum session spend in USD. Once exceeded, all `high` tier requests are automatically downgraded to `medium`.                                                                                                                                                       |
-| `rules` | `array` | --           | **Optional.** List of keyword-based routing rules (see [Custom Rules](#custom-rules)).                                                                                                                                                                                              |
-| `profiles` | `object` | _(required)_ | Map of profile definitions.                                                                                                                                                                                                                                                         |
+| Field | Type | Default      | Description                                                                                                                                                                                                                                                                       |
+|---|---|--------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `debug` | `boolean` | `false`      | Enable debug mode. Equivalent to running `/router debug on` at startup.                                                                                                                                                                                                           |
+| `defaultProfile` | `string` | `"auto"`     | The profile to activate by default when the router starts. Must match a key in `profiles`. See [Activating the Router](#activating-the-router) for how to make the router active on session start.                                                                                |
+| `classifierModel` | `string` | --           | A fast model ref (e.g. `google/gemini-flash-latest`) used to classify user intent via LLM. When set, the classifier has final say on tier selection (gated by triggers below). Omit to use fast local heuristics only. |
+| `classifierModelThinking` | `ThinkingLevel` | `off` | Reasoning/thinking level for the classifier model calls. Defaults to `off` (no extended reasoning) to keep calls fast and cheap. |
+| `classifierRunOnceAfterToolCount` | `number` | `3` | Run the classifier once after this many tool continuations. Default: 3. Set to 0 to disable. |
+| `classifierRunAfterToolFailures` | `number` | `2` | Run the classifier after this many consecutive tool failures (counting from the tail). Default: 2. |
+| `classifierCadence` | `number` | `10` | Run the classifier every N tool continuations as a periodic re-check. Default: 10. Set to 0 to disable. |
+| `phaseBias` | `number` (0.0-1.0) | `0.5`        | Stickiness of the current routing phase. Higher values keep the router in the same tier longer during multi-turn conversations.                                                                                                                                                   |
+| `largeContextThreshold` | `number` | --           | **Optional.** Token count threshold. If session context usage exceeds this value, the router forces `high` tier regardless of other factors.                                                                                                                                      |
+| `maxSessionBudget` | `number` (USD) | --           | **Optional.** Maximum session spend in USD. Once exceeded, all `high` tier requests are automatically downgraded to `medium`.                                                                                                                                                     |
+| `rules` | `array` | --           | **Optional.** List of keyword-based routing rules (see [Custom Rules](#custom-rules)).                                                                                                                                                                                            |
+| `profiles` | `object` | _(required)_ | Map of profile definitions.                                                                                                                                                                                                                                                       |
 
 ### Profile Definitions
 
@@ -330,35 +330,33 @@ Show a comprehensive help listing of all subcommands.
 
 ## How Routing Works
 
-For every turn, the router executes this ordered decision pipeline:
+For every turn, the router executes this ordered pipeline:
 
 ```
 GATE 0: GOOGLE LOCK
   - Google thinking tool continuation? → preserve exact model/tier
-     (skips EVERYTHING below — classifier, heuristics, all overrides)
+     (skips EVERYTHING below)
 
-GATE 1: CLASSIFIER GATING (controls when the LLM classifier runs)
-  - New user message? → always run full pipeline
+PIPELINE (always runs)
+  ├─ analyzePrompt() — heuristic analysis (keyword/word-count/wc/phase-bias)
+  ├─ Manual pin check → use pinned tier if set
+  ├─ Custom rules → use configured tier if matched
+  ├─ Heuristic tier + budget check → advisory HeuristicAnalysis
+  ├─ Context trigger (optional): force high if context is large
+  └─ heuristicAnalysis is now ready
+
+GATE 1: CLASSIFIER GATING (only when classifierModel is configured)
+  - No pin, no context trigger, no Google continuation → evaluate gates
+  - New user message? → run classifier (gates bypassed)
   - Tool-result continuation?
-     ├─ Cont # ≥ classifierRunOnceAfterToolCount (first crossing)? → run once
-     ├─ Consecutive failures ≥ classifierRunAfterToolFailures? → run (crisis)
-     ├─ Cont % classifierCadence === 0? → run (periodic cadence)
-     └─ Otherwise → reuse previous decision, skip classifier
+     ├─ contCount >= confInitN (first crossing)? → run once
+     ├─ Consecutive failures >= confFailN? → run (crisis)
+     ├─ contCount crosses new cadence bucket? → run (periodic)
+     └─ Otherwise → reuse previous decision (classifier or heuristic)
+  - Classifier result final (budget re-checked after) — heuristicAnalysis is
+    advisory input for the LLM classifier prompt
 
-DECISION PHASE (decideRouting())
-  - Manual pin check → use pinned tier if set
-  - Custom rules check → use configured tier if matched
-  - Heuristics (keywords, word count, turn-local tool count,
-     conversation length, explicit hints) → pick tier
-  - Phase bias modulates thresholds for stickiness
-  - Budget check → downgrade high to medium if exceeded
-
-POST-HEURISTIC OVERRIDES
-  - Context trigger (optional): force high if context is large
-  - LLM classifier (optional): override with fast LLM intent
-     categorization (budget re-applied after; only when gated in)
-
-POST-ROUTE CORRECTIONS
+POST-ROUTE CORRECTIONS (always apply)
   - Image-aware escalation: upgrade tier if routed model
      doesn't support image attachments
 
@@ -387,7 +385,7 @@ Without an LLM classifier, the router uses these signals locally:
 
 ### Classifier Gating
 
-When the router has an LLM classifier configured (`classifierModel`), it doesn't run it on every single turn. Instead, the classifier is gated by three smart triggers that avoid waste while catching real tier mismatches:
+When the router has an LLM classifier configured (`classifierModel`), it doesn't run on every turn. Instead, the classifier is gated by smart triggers that avoid waste while catching real tier mismatches. **The classifier has final say on tier** (subject to budget re-checks and post-route corrections like image escalation) — heuristic analysis serves as advisory input to the LLM classifier prompt.
 
 | Gate | Trigger                                                                                     | Reason |
 |---|---------------------------------------------------------------------------------------------|---|
@@ -406,10 +404,10 @@ When the classifier is skipped, the **previous routing decision** is reused dire
 
 **Context Trigger Upgrade** (`largeContextThreshold`): When the conversation context exceeds this token count (measured via `ctx.getContextUsage()`), the router **jumps directly to `high`** tier — it does not step up one level at a time. Since context usage is cumulative and only grows across turns (unless compaction reduces it), once the threshold is crossed, the router stays on `high` for the remainder of the session. This is intentional: a weaker model with a smaller context window might truncate or lose coherence on a large conversation, so the trigger ensures the full context is preserved for subsequent requests, even trivial ones.
 
-**Phase Memory (Stickiness)** (`phaseBias`, 0.0-1.0, default `0.5`):
-- During `planning` phase, the high-tier word-count threshold is lowered (`max(40, 120 - phaseBias x 80)`), making it easier to stay in high.
-- During `implementation` or `planning` phases, the low-tier threshold is lowered (`max(4, 12 - phaseBias x 8)`), requiring even fewer words to trigger low.
-- Phases flow: `planning -> implementation -> lightweight`.
+**Tier Stickiness (Bias)** (`phaseBias`, 0.0-1.0, default `0.5`):
+- If the previous decision was `high` tier, the word-count high-threshold is lowered (`max(40, 120 - phaseBias x 80)`), making it easier to stay in high.
+- If the previous decision was `high` or `medium` tier, the low-threshold is lowered (`max(4, 12 - phaseBias x 8)`), requiring even fewer words to trigger a low-tier decision.
+- Stickiness only biases thresholds toward the current tier — it never overrides a clear signal.
 
 ### Fallback Chains
 
@@ -471,15 +469,14 @@ Router: enabled
 Profile: balanced (active)
 Pin: auto
 Cost: $0.0123 / $1.00
-Route: medium -> google/gemini-flash-latest (medium)
-Phase: implementation
+Route: medium -> google/gemini-flash-latest
 ```
 
 **Debug History:** With `/router debug on`, every routing decision is logged with timestamps. View with `/router debug show`:
 ```
-[10:32:15 AM] balanced: high -> openai/gpt-5.4-pro (high) (Detected planning from keywords.)
-[10:33:42 AM] balanced: medium -> google/gemini-flash-latest (medium) (Detected implementation work.)
-[10:34:10 AM] balanced: low -> openai/gpt-5.4-nano (low) (Detected a short read-only lookup request.)
+[10:32:15 AM] balanced: high -> openai/gpt-5.4-pro (Detected planning from keywords.)
+[10:33:42 AM] balanced: medium -> google/gemini-flash-latest (Detected implementation work.)
+[10:34:10 AM] balanced: low -> openai/gpt-5.4-nano (Detected a short read-only lookup request.)
 ```
 
 ---

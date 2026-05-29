@@ -18,6 +18,9 @@ export const FALLBACK_CONFIG: RouterConfig = {
   defaultProfile: 'auto',
   debug: false,
   classifierModelThinking: 'off',
+  classifierRunOnceAfterToolCount: 3,
+  classifierRunAfterToolFailures: 2,
+  classifierCadence: 10,
   profiles: {
     auto: {
       high: { model: 'openai/gpt-5.4-pro', thinking: 'off' },
@@ -94,6 +97,12 @@ export const mergeConfig = (
     classifierModel: override.classifierModel ?? base.classifierModel,
     classifierModelThinking:
       override.classifierModelThinking ?? base.classifierModelThinking,
+    classifierRunOnceAfterToolCount:
+      override.classifierRunOnceAfterToolCount ?? base.classifierRunOnceAfterToolCount,
+    classifierRunAfterToolFailures:
+      override.classifierRunAfterToolFailures ?? base.classifierRunAfterToolFailures,
+    classifierCadence:
+      override.classifierCadence ?? base.classifierCadence,
     phaseBias: override.phaseBias ?? base.phaseBias,
     largeContextThreshold:
       override.largeContextThreshold ?? base.largeContextThreshold,
@@ -302,6 +311,9 @@ export const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
       debug: typeof raw.debug === 'boolean' ? raw.debug : false,
       classifierModel,
       classifierModelThinking,
+      classifierRunOnceAfterToolCount: raw.classifierRunOnceAfterToolCount,
+      classifierRunAfterToolFailures: raw.classifierRunAfterToolFailures,
+      classifierCadence: raw.classifierCadence,
       phaseBias,
       largeContextThreshold,
       maxSessionBudget,

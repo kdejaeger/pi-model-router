@@ -1,6 +1,6 @@
 # Architecture: Pi Model Router Extension
 
-The `pi-model-router` registers a custom logical provider (`router`) that exposes "profiles" as models (e.g., `router/auto`). For every turn, the router selects an underlying concrete model based on task complexity, conversation phase, and user-defined rules.
+The `pi-model-router` registers a custom logical provider (`router`) that exposes "profiles" as models (e.g., `router/auto`). For every turn, the router selects an underlying concrete model based on task complexity, conversation context, and user-defined rules.
 
 > For the full decision-pipeline reference (heuristic details, budget/context controls, fallback chains, image-aware escalation, Google thinking tool continuation, auto-context truncation, and thinking control), see [How Routing Works](../README.md#how-routing-works) in the README.
 
@@ -23,31 +23,27 @@ The extension is modularized for maintainability:
 po or turn_end event
       │
       ▼
-index.ts ──→ routing.ts (decideRouting)
-      │               │
-      │               ▼
-      │          config.ts (load profiles, rules, thresholds)
-      │               │
-      │               ▼
-      │          state.ts (read pins, thinking overrides, debug history)
-      │               │
-      │               ▼
-      │          Return RoutingDecision
-      │
-      ▼
-provider.ts (streamSimple)
-      │
-      ├─→ Google lock: preserve exact model if Google thinking continuation
-      ├─→ Classifier gating:
-      │     ├─ New user message? → run full pipeline
-      │     ├─ Tool continuation # ≤ initialContinuations? → run
-      │     ├─ Consecutive failures ≥ failureTrigger? → run (crisis)
-      │     ├─ Continuation % cadence === 0? → run (periodic)
-      │     └─ Otherwise → reuse previous decision
-      ├─→ Post-route corrections (context trigger, image escalation)
-      ├─→ Auto-context truncation
-      ├─→ Delegate to target model
-      └─→ Fallback chain on failure
+index.ts ──→ provider.ts (streamSimple)
+                 │
+                 ├─→ Google lock → preserve exact model for tool continuation
+                 │
+                 ├─→ routing.ts (analyzePrompt)
+                 │      Always runs: heuristic analysis (keywords, word count,
+                 │      tool count, phase-bias thresholds, rules, budget check,
+                 │      manual pin, context trigger → HeuristicAnalysis)
+                 │
+                 ├─→ Classifier gating (only when classifierModel configured):
+                 │     ├─ New user message? → run classifier (final say)
+                 │     ├─ Tool cont ≥ confInitN (first crossing)? → run once
+                 │     ├─ Consecutive failures ≥ confFailN? → run (crisis)
+                 │     ├─ Cont crosses new cadence bucket? → run (periodic)
+                 │     └─ Otherwise → reuse previous decision
+                 │     heuristicAnalysis is advisory to the classifier
+                 │
+                 ├─→ Post-route corrections (image escalation)
+                 ├─→ Auto-context truncation
+                 ├─→ Delegate to target model
+                 └─→ Fallback chain on failure
       │
       ▼
 ui.ts (update status line + widget)
@@ -80,4 +76,4 @@ Router state is persisted using `pi.appendEntry` with a custom type `router-stat
 
 ### Debug History
 
-The debug history stores the last 12 routing decisions (`MAX_DEBUG_HISTORY` in `constants.ts`). When debug mode is enabled (`/router debug on`), each decision is appended to `debugHistory` and shown in the status widget. The widget displays the most recent entries (truncated by pi's 10-line widget limit, newest first), and `/router debug show` prints the full history.
+The debug history stores the last 12 routing decisions (`MAX_DEBUG_HISTORY` in `constants.ts`). When debug mode is enabled (`/router debug on`), each decision is appended to `debugHistory` and `/router debug show` prints the full history.
