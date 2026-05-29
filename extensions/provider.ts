@@ -14,7 +14,7 @@ import type { RouterConfig, RouterPinByProfile, RouterThinkingByProfile, RouterT
 import { parseCanonicalModelRef, profileNames, ROUTER_TIERS } from './config';
 import {
   buildRoutingDecision,
-  countConsecutiveRecentToolFailures,
+  countConsecutiveRecentToolFailuresSinceLastUserPrompt,
   countToolResultsSinceLastUserPrompt,
   decideRouting,
   extractTextFromContent,
@@ -272,18 +272,23 @@ export const registerRouterProvider = (
               if (pinnedTier || decision.isContextTriggered || decision.isRuleMatched) return false;
               if (!lastMsgWasTool) return true;
 
-              const failCount = countConsecutiveRecentToolFailures(context);
-              const confInitN = currentConfig.classifierInitialContinuations ?? 2;
-              const confFailN = currentConfig.classifierFailureTrigger ?? 2;
-              const confCadence = currentConfig.classifierCadence ?? 10;
+              const confInitN = currentConfig.classifierRunOnceAfterToolCount ?? 3;
+              const confFailN = currentConfig.classifierRunAfterToolFailures ?? 2;
+              const lastClassifierRunToolCount = lastDecision?.lastClassifierRunToolCount ?? 0; // Cadence: crossed a boundary since last classifier run
 
               const triggers: string[] = [];
-              if (contCount <= confInitN) triggers.push(`init(≤${confInitN})`);
+              if (confInitN > 0 && contCount >= confInitN && confInitN > lastClassifierRunToolCount) {
+                triggers.push(`init(≥${confInitN})`);
+              }
+
+              const failCount = countConsecutiveRecentToolFailuresSinceLastUserPrompt(context);
               if (failCount >= confFailN) triggers.push(`fail(${failCount}≥${confFailN})`);
-              const lastCad = lastDecision?.classifierContCount ?? 0; // Cadence: crossed a boundary since last classifier run
-              if (confCadence > 0 && Math.floor(contCount / confCadence) > Math.floor(lastCad / confCadence)) {
+
+              const confCadence = currentConfig.classifierCadence ?? 10;
+              if (confCadence > 0 && Math.floor(contCount / confCadence) > Math.floor(lastClassifierRunToolCount / confCadence)) {
                 triggers.push(`cadence(%${confCadence})`);
               }
+
               if (state.debugEnabled && state.lastExtensionContext) {
                 if (triggers.length > 0) {
                   state.lastExtensionContext.ui.notify(`RUN classifier — ${triggers.join(', ')} (cont:${contCount})`, 'info');
@@ -324,9 +329,9 @@ export const registerRouterProvider = (
               } else if (state.debugEnabled && state.lastExtensionContext) {
                 state.lastExtensionContext.ui.notify('Classifier returned no result — using heuristics', 'warning');
               }
-              decision.classifierContCount = contCount;
+              decision.lastClassifierRunToolCount = contCount;
             } else {
-              decision.classifierContCount = lastDecision?.classifierContCount; // Preserve the cadence counter from the previous decision
+              decision.lastClassifierRunToolCount = lastDecision?.lastClassifierRunToolCount; // Preserve the cadence counter from the previous decision
             }
           }
 
@@ -389,10 +394,11 @@ export const registerRouterProvider = (
               modelsToTry = [decision.targetLabel];
             }
           }
+          const MAX_RETRIES_PER_MODEL = 2;
           let lastError: any;
           let success = false;
 
-          for (let i = 0; i < modelsToTry.length; i++) {
+          modelLoop: for (let i = 0; i < modelsToTry.length; i++) {
             const modelRef = modelsToTry[i];
             const { provider: targetProvider, modelId: targetModelId } = parseCanonicalModelRef(modelRef);
 
@@ -416,74 +422,81 @@ export const registerRouterProvider = (
             const apiKey = auth.apiKey;
             const headers = auth.headers;
 
-            try {
-              // HONESTY CHECK & AUTO-TRUNCATION
-              // If the picked model has a smaller context than what we reported, truncate now.
-              let effectiveContext = context;
-              const targetLimit = targetModel.contextWindow || 128_000;
-              if (targetLimit < model.contextWindow!) {
-                effectiveContext = truncateContext(context, targetLimit);
-              }
-
-              const thinkingOverride = actions.getThinkingOverride(model.id, decision.tier);
-              const delegatedReasoning =
-                targetModel.reasoning && (thinkingOverride ?? decision.thinking) !== 'off'
-                  ? (thinkingOverride ?? decision.thinking)
-                  : undefined;
-
-              pi.setThinkingLevel(delegatedReasoning ?? 'off');
-              if (state.lastExtensionContext) {
-                if (delegatedReasoning) {
-                  state.lastExtensionContext.ui.setHiddenThinkingLabel?.(
-                    `Thinking (${targetProvider}/${targetModelId})...`,
-                  );
-                } else {
-                  state.lastExtensionContext.ui.setHiddenThinkingLabel?.();
+            // Each model gets MAX_RETRIES_PER_MODEL attempts before moving to the next
+            for (let attempt = 1; attempt <= MAX_RETRIES_PER_MODEL; attempt++) {
+              try {
+                // HONESTY CHECK & AUTO-TRUNCATION
+                // If the picked model has a smaller context than what we reported, truncate now.
+                let effectiveContext = context;
+                const targetLimit = targetModel.contextWindow || 128_000;
+                if (targetLimit < model.contextWindow!) {
+                  effectiveContext = truncateContext(context, targetLimit);
                 }
-              }
 
-              const delegatedStream = streamSimple(targetModel, effectiveContext, {
-                ...options,
-                apiKey,
-                headers,
-                ...(delegatedReasoning ? { reasoning: delegatedReasoning } : {}),
-              });
+                const thinkingOverride = actions.getThinkingOverride(model.id, decision.tier);
+                const delegatedReasoning =
+                  targetModel.reasoning && (thinkingOverride ?? decision.thinking) !== 'off'
+                    ? (thinkingOverride ?? decision.thinking)
+                    : undefined;
 
-              let contentReceived = false;
-              for await (const event of delegatedStream) {
-                if (event.type === 'done') {
-                  const cost = event.message.usage?.cost?.total ?? 0;
-                  state.accumulatedCost += cost;
-                }
-                if (event.type === 'error' && !contentReceived) {
-                  throw new Error((event as any).error?.errorMessage || 'Model failed before sending content.');
-                }
-                const isContent =
-                  event.type === 'text_delta' ||
-                  event.type === 'thinking_delta' ||
-                  event.type === 'toolcall_delta' ||
-                  event.type === 'toolcall_end';
-                if (isContent) contentReceived = true;
-                stream.push(event);
-              }
-              if (modelRef !== decision.targetLabel) {
-                // Update decision to reflect actual model used if it was a fallback
-                decision.isFallback = true;
-                decision.targetLabel = modelRef;
-                decision.targetProvider = targetProvider;
-                decision.targetModelId = targetModelId;
-
-                state.lastDecision = decision;
+                pi.setThinkingLevel(delegatedReasoning ?? 'off');
                 if (state.lastExtensionContext) {
-                  actions.updateStatus(state.lastExtensionContext);
+                  if (delegatedReasoning) {
+                    state.lastExtensionContext.ui.setHiddenThinkingLabel?.(
+                      `Thinking (${targetProvider}/${targetModelId})...`,
+                    );
+                  } else {
+                    state.lastExtensionContext.ui.setHiddenThinkingLabel?.();
+                  }
                 }
-              }
 
-              success = true;
-              break;
-            } catch (err) {
-              lastError = err;
-              state.lastExtensionContext?.ui.notify( `Failed to delegate to model ${modelRef}: ${err}`,  'warning');
+                const delegatedStream = streamSimple(targetModel, effectiveContext, {
+                  ...options,
+                  apiKey,
+                  headers,
+                  ...(delegatedReasoning ? { reasoning: delegatedReasoning } : {}),
+                });
+
+                let contentReceived = false;
+                for await (const event of delegatedStream) {
+                  if (event.type === 'done') {
+                    const cost = event.message.usage?.cost?.total ?? 0;
+                    state.accumulatedCost += cost;
+                  }
+                  if (event.type === 'error' && !contentReceived) {
+                    throw new Error((event as any).error?.errorMessage || 'Model failed before sending content.');
+                  }
+                  const isContent =
+                    event.type === 'text_delta' ||
+                    event.type === 'thinking_delta' ||
+                    event.type === 'toolcall_delta' ||
+                    event.type === 'toolcall_end';
+                  if (isContent) contentReceived = true;
+                  stream.push(event);
+                }
+                if (modelRef !== decision.targetLabel) {
+                  // Update decision to reflect actual model used if it was a fallback
+                  decision.isFallback = true;
+                  decision.targetLabel = modelRef;
+                  decision.targetProvider = targetProvider;
+                  decision.targetModelId = targetModelId;
+
+                  state.lastDecision = decision;
+                  if (state.lastExtensionContext) {
+                    actions.updateStatus(state.lastExtensionContext);
+                  }
+                }
+
+                success = true;
+                break modelLoop; // Success — exit both loops
+              } catch (err) {
+                lastError = err;
+                const remaining = MAX_RETRIES_PER_MODEL - attempt;
+                state.lastExtensionContext?.ui.notify(
+                  `Failed to delegate to model ${modelRef} (attempt ${attempt}/${MAX_RETRIES_PER_MODEL}): ${err}${remaining > 0 ? ` — ${remaining} retr${remaining === 1 ? 'y' : 'ies'} left` : ''}`,
+                  'warning',
+                );
+              }
             }
           }
 

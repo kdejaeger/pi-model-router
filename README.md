@@ -152,8 +152,8 @@ There are two unrelated uses of `"auto"` in this project: (1) as a **profile nam
 | `defaultProfile` | `string` | `"auto"`     | The profile to activate by default when the router starts. Must match a key in `profiles`. See [Activating the Router](#activating-the-router) for how to make the router active on session start.                                                                                  |
 | `classifierModel` | `string` | --           | **Optional.** A fast model ref (e.g. `google/gemini-flash-latest`) used to classify user intent via LLM, overriding heuristic-based routing. Omit to use fast local heuristics only.                                                                                                |
 | `classifierModelThinking` | `ThinkingLevel` | `off`        | **Optional.** Reasoning/thinking level used when calling the classifier model. Defaults to `off` (no extended reasoning) to keep classifier calls fast and cheap. Set to `low`, `medium`, or `high` if the classifier needs more reasoning to make more accurate routing decisions. |
-| `classifierInitialContinuations` | `number` | `2`          | **Optional.** Run the classifier on the first N tool-result continuations after a new user message. Captures the assistant's initial feedback for better tier alignment. Default: 2. Set to 0 to disable.                                                                           |
-| `classifierFailureTrigger` | `number` | `2`          | **Optional.** Run the classifier when this many **consecutive** tool results have failed (counting from the tail). Resets to 0 on any successful tool result. Default: 2.                                                                                                           |
+| `classifierRunOnceAfterToolCount` | `number` | `3`          | **Optional.** Run the classifier once after this many tool continuations (first crossing, before cadence). Captures the assistant's initial feedback for better tier alignment. Default: 3. Set to 0 to disable.                                                                        |
+| `classifierRunAfterToolFailures` | `number` | `2`          | **Optional.** Run the classifier after this many **consecutive** tool failures (counting from the tail). Resets to 0 on any successful tool result. Default: 2.                                                                                                           |
 | `classifierCadence` | `number` | `10`         | **Optional.** Run the classifier every N tool continuations as a periodic re-check. Default: 10 Set to 0 to disable cadence-based gating.                                                                                                                                           |
 | `phaseBias` | `number` (0.0-1.0) | `0.5`        | Stickiness of the current routing phase. Higher values keep the router in the same tier longer during multi-turn conversations.                                                                                                                                                     |
 | `largeContextThreshold` | `number` | --           | **Optional.** Token count threshold. If session context usage exceeds this value, the router forces `high` tier regardless of other factors.                                                                                                                                        |
@@ -340,8 +340,8 @@ GATE 0: GOOGLE LOCK
 GATE 1: CLASSIFIER GATING (controls when the LLM classifier runs)
   - New user message? → always run full pipeline
   - Tool-result continuation?
-     ├─ Cont # ≤ classifierInitialContinuations? → run (fresh feedback)
-     ├─ Consecutive failures ≥ classifierFailureTrigger? → run (crisis)
+     ├─ Cont # ≥ classifierRunOnceAfterToolCount (first crossing)? → run once
+     ├─ Consecutive failures ≥ classifierRunAfterToolFailures? → run (crisis)
      ├─ Cont % classifierCadence === 0? → run (periodic cadence)
      └─ Otherwise → reuse previous decision, skip classifier
 
@@ -392,8 +392,8 @@ When the router has an LLM classifier configured (`classifierModel`), it doesn't
 | Gate | Trigger                                                                                     | Reason |
 |---|---------------------------------------------------------------------------------------------|---|
 | **Google lock** | Previous model was Google with thinking, and this is a tool-result continuation             | Freezes to the same model — any change breaks thought-signature replay |
-| **Fresh feedback** | Tool-continuation count within current turn ≤ `classifierInitialContinuations` (default: 2) | Captures the assistant's first response + tool result after a new user message |
-| **Crisis** | Consecutive failed tool results (from the tail) ≥ `classifierFailureTrigger` (default: 2)   | Model is struggling — reclassify to potentially upgrade tier |
+| **Fresh feedback** | Tool-continuation count first reaches or exceeds `classifierRunOnceAfterToolCount` (default: 3) | Captures the assistant's first response + tool result after a new user message |
+| **Crisis** | Consecutive failed tool results (from the tail) ≥ `classifierRunAfterToolFailures` (default: 2)   | Model is struggling — reclassify to potentially upgrade tier |
 | **Cadence** | Tool-continuation count % `classifierCadence` === 0 (default: 10)                           | Periodic re-check for long-running turns where initial assessment might be stale |
 
 All counters reset per user turn — each new user message is treated as a fresh task. The crisis gate counts **consecutive** failures from the tail: one successful tool result resets the count to 0, so it only fires when failures are actually piling up.
