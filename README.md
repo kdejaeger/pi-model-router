@@ -156,7 +156,8 @@ There are two unrelated uses of `"auto"` in this project: (1) as a **profile nam
 | `classifierRunAfterToolFailures` | `number` | `2` | Run the classifier after this many consecutive tool failures (counting from the tail). Default: 2. |
 | `classifierCadence` | `number` | `10` | Run the classifier every N tool continuations as a periodic re-check. Default: 10. Set to 0 to disable. |
 | `phaseBias` | `number` (0.0-1.0) | `0.5`        | Stickiness of the current routing phase. Higher values keep the router in the same tier longer during multi-turn conversations.                                                                                                                                                   |
-| `largeContextThreshold` | `number` | --           | **Optional.** Token count threshold. If session context usage exceeds this value, the router forces `high` tier regardless of other factors.                                                                                                                                      |
+| `defaultContextThresholdPercent` | `number` | --           | **Optional.** Default percentage threshold of a model's context window. If session context usage exceeds this percentage, the router searches for a suitable model in the current or higher tiers. |
+| `contextThresholdPercentOverrides` | `Record<string, number>` | --           | **Optional.** Map of model-specific threshold overrides (model slug -> percentage). |
 | `rules` | `array` | --           | **Optional.** List of keyword-based routing rules (see [Custom Rules](#custom-rules)).                                                                                                                                                                                            |
 | `profiles` | `object` | _(required)_ | Map of profile definitions.                                                                                                                                                                                                                                                       |
 
@@ -201,7 +202,7 @@ The config system performs thorough validation on reload/startup and surfaces wa
 - Validates thinking levels against allowed values
 - Validates routing rule format
 - Reports missing/invalid profiles with fallback resolution
-- Normalizes `phaseBias` to range 0.0-1.0, and `largeContextThreshold` to positive values only
+- Normalizes `phaseBias` to range 0.0-1.0, and `defaultContextThresholdPercent` to positive values only
 
 ---
 
@@ -399,7 +400,7 @@ When the classifier is skipped, the **previous routing decision** is reused dire
 
 ### Context Controls
 
-**Context Trigger Upgrade** (`largeContextThreshold`): When the conversation context exceeds this token count (measured via `ctx.getContextUsage()`), the router **jumps directly to `high`** tier — it does not step up one level at a time. Since context usage is cumulative and only grows across turns (unless compaction reduces it), once the threshold is crossed, the router stays on `high` for the remainder of the session. This is intentional: a weaker model with a smaller context window might truncate or lose coherence on a large conversation, so the trigger ensures the full context is preserved for subsequent requests, even trivial ones.
+**Context & Image Requirements** (`defaultContextThresholdPercent`): When the conversation context exceeds this percentage of a model's window, or when images are detected, the router searches for a suitable model in the current or higher tiers. This check happens on every turn, but since context usage usually only grows across turns (unless compaction reduces it), the router will often stay in higher tiers once pushed there.
 
 **Tier Stickiness (Bias)** (`phaseBias`, 0.0-1.0, default `0.5`):
 - If the previous decision was `high` tier, the word-count high-threshold is lowered (`max(40, 120 - phaseBias x 80)`), making it easier to stay in high.
@@ -427,9 +428,9 @@ When a fallback is used, `decision.isFallback` is set to `true` and shown in the
 
 ### Image-Aware Auto-Routing
 
-When the user attaches an image, the router checks whether the routed tier's model supports image inputs. If not, it escalates to the next higher tier (`low -> medium -> high`). If a fallback model within the escalated tier doesn't support the configured thinking level, pi clamps it internally.
+When the user attaches an image, the router checks whether the routed model supports image inputs. If not, it searches for another model in the same tier that does. If none are found, it escalates to higher tiers until a suitable model is found.
 
-> **Note:** The escalation only checks image support — it does **not** compare context window sizes. To avoid landing on a model that can see images but not the full conversation, make sure your `high` tier model both supports images and has a large enough context window for your sessions. If a `medium` tier model also supports images, the escalation may stop there — confirm its context window is sufficient, or configure `low` and `medium` without image support so escalation always reaches `high`.
+> **Note:** The search ensures that the selected model also fits the current context window requirements. To avoid landing on a model that can see images but not the full conversation, make sure your models have adequate context windows and image support configured.
 
 ### Google Thinking Tool Continuation
 
@@ -486,7 +487,7 @@ Route: medium -> google/gemini-flash-latest
   "defaultProfile": "balanced",
   "classifierModel": "google/gemini-flash-latest",
   "phaseBias": 0.5,
-  "largeContextThreshold": 100000,
+  "defaultContextThresholdPercent": 70,
   "rules": [
     { "matches": ["deploy", "production", "release"], "tier": "high", "reason": "Safety check for production tasks" },
     { "matches": "changelog", "tier": "low" }

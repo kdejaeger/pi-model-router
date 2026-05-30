@@ -104,8 +104,10 @@ export const mergeConfig = (
     classifierCadence:
       override.classifierCadence ?? base.classifierCadence,
     phaseBias: override.phaseBias ?? base.phaseBias,
-    largeContextThreshold:
-      override.largeContextThreshold ?? base.largeContextThreshold,
+    defaultContextThresholdPercent:
+      override.defaultContextThresholdPercent ?? base.defaultContextThresholdPercent,
+    contextThresholdPercentOverrides:
+      override.contextThresholdPercentOverrides ?? base.contextThresholdPercentOverrides,
 
     rules: override.rules ?? base.rules,
     profiles: mergedProfiles,
@@ -250,11 +252,15 @@ export const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
       ? Math.max(0, Math.min(1, raw.phaseBias))
       : 0.5;
 
-  const largeContextThreshold =
-    typeof raw.largeContextThreshold === 'number' &&
-    raw.largeContextThreshold > 0
-      ? raw.largeContextThreshold
+  const defaultContextThresholdPercent =
+    typeof raw.defaultContextThresholdPercent === 'number' &&
+    raw.defaultContextThresholdPercent > 0
+      ? raw.defaultContextThresholdPercent
       : undefined;
+
+  const contextThresholdPercentOverrides = isObjectRecord(raw.contextThresholdPercentOverrides)
+    ? (raw.contextThresholdPercentOverrides as Record<string, number>)
+    : undefined;
 
   const rules: RoutingRule[] = [];
   if (Array.isArray(raw.rules)) {
@@ -310,7 +316,8 @@ export const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
       classifierRunAfterToolFailures: raw.classifierRunAfterToolFailures,
       classifierCadence: raw.classifierCadence,
       phaseBias,
-      largeContextThreshold,
+      defaultContextThresholdPercent,
+      contextThresholdPercentOverrides,
       rules: rules.length > 0 ? rules : undefined,
       profiles: normalizedProfiles,
     },

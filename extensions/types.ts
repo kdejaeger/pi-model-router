@@ -33,7 +33,8 @@ export interface RouterConfig {
   classifierRunAfterToolFailures?: number; // Run the classifier after this many consecutive tool failures in a single turn. Default: 2.
   classifierCadence?: number; // Run the classifier every Nth tool continuation during long chains. Default: 10.
   phaseBias?: number;
-  largeContextThreshold?: number;
+  defaultContextThresholdPercent?: number;
+  contextThresholdPercentOverrides?: Record<string, number>;
   rules?: RoutingRule[];
   profiles: Record<string, RouterProfile>;
 }

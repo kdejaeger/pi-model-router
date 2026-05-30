@@ -7,7 +7,10 @@
   "classifierRunAfterToolFailures": 2,
   "classifierCadence": 10,
   "phaseBias": 0.5,
-  "largeContextThreshold": 100000,
+  "defaultContextThresholdPercent": 70,
+  "contextThresholdPercentOverrides": {
+    "openrouter/deepseek/deepseek-v4-flash": 60
+  },
   "rules": [
     {
       "matches": ["deploy", "production", "release"],

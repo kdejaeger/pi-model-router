@@ -19,18 +19,23 @@ The `pi-model-router` is an extension-first model router for the `pi` coding age
 
 ## Routing Decision Logic
 Routing follows a tiered system (`high`, `medium`, `low`) and an ordered decision flow:
-### Decision Phase (inside `decideRouting()`)
+
+### Phase 1: Intent Analysis
 1. **Manual Pin**: Use tier pinned via `/router pin` or `/router fix` if set.
-2. **Custom Rules**: Check keyword-based rules against the user prompt.
-3. **Heuristics + Phase Bias**: Local analysis (word count, keywords, tool usage, conversation length) with phase-behavior stickiness applied via threshold modulation.
+2. **Google Thinking Lock**: Preserve the exact model/tier when a Google tool-result continuation is detected.
+3. **Custom Rules**: Check keyword-based rules against the user prompt.
+4. **Heuristics + Phase Bias**: Local analysis (word count, keywords, tool usage) with phase-behavior stickiness.
+5. **LLM Classifier (Optional)**: Call `classifierModel` for intent categorization (only if no pin and no rule match).
 
-### Post-Heuristic Overrides (in `provider.ts`)
-1. **Context Trigger**: Upgrade to `high` if `largeContextThreshold` is reached.
-2. **LLM Classifier (Optional)**: Call `classifierModel` for intent categorization (only if no pin, no rule match, and no context trigger fired).
+### Phase 2: Requirement Matching (in `provider.ts`)
+The router searches tiers from the intent-suggested tier upwards using a two-pass strategy:
+1. **Pass 1 (Strict)**: Find a model that supports images (if present) and fits the current context within `defaultContextThresholdPercent` (or overrides).
+2. **Pass 2 (Last Resort)**: If Pass 1 fails, find a model that supports images but allow context truncation.
 
-### Post-Route Corrections
-1. **Google Thinking Tool Continuation**: Preserve the exact model/tier when a Google tool-result continuation is detected, to avoid thought-signature replay errors.
-2. **Image-Aware Escalation**: Escalate to a higher tier if the routed model doesn't support image attachments.
+### Phase 3: Execution & Fallbacks
+1. **Authentication**: Retrieve API keys for the selected model.
+2. **Delegation**: Stream the request to the target model with appropriate thinking levels.
+3. **Fallbacks**: If a model fails, the search continues to the next available model in the requirements-compliant list.
 
 ## Coding Standards
 - **TypeScript**: Strictly adhere to TypeScript. NEVER use the `any` type; prefer specific types or `unknown`.

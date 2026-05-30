@@ -239,27 +239,6 @@ export const registerRouterProvider = (
             heuristicAnalysis
           );
 
-          // Optional Context Trigger Upgrade
-          if (currentConfig.largeContextThreshold && heuristicAnalysis.suggestedTier !== 'high' && state.lastExtensionContext) {
-            try {
-              const usage = await state.lastExtensionContext.getContextUsage();
-              if (usage?.tokens && usage.tokens > currentConfig.largeContextThreshold) {
-                decision = buildRoutingDecision(
-                  model.id,
-                  profile,
-                  'high',
-                  `Context usage (${usage.tokens}) exceeds threshold (${currentConfig.largeContextThreshold}). Forced high tier.`,
-                  state.thinkingByProfile[model.id],
-                  false,
-                  lastDecision?.lastClassifierRunToolCount
-                );
-                decision.isContextTriggered = true;
-              }
-            } catch (e) {
-              // ignore
-            }
-          }
-
           const lastMessage = context.messages[context.messages.length - 1];
           const lastMsgWasTool = lastMessage?.role === 'toolResult';
 
@@ -376,153 +355,141 @@ export const registerRouterProvider = (
           }
 
           const detectedImageInRecentContext = imageDetectedInRecentContext(context);
-          if (detectedImageInRecentContext) {
-            if (state.debugEnabled && state.lastExtensionContext) {
-                state.lastExtensionContext.ui.notify('Image detected in recent context, checking fallback models', 'info');
-            }
-            const tierModels = [decision.targetLabel, ...(profile[decision.tier].fallbacks ?? [])];
-            if (!tierModels.some((modelRef) => checkModelSupportsImage(modelRef, state.currentModelRegistry))) {
-              const tiersToTry: RouterTier[] = decision.tier === 'low' ? ['medium', 'high'] : decision.tier === 'medium' ? ['high'] : [];
+          let currentTokens = 0;
+          try {
+            const usage = await state.lastExtensionContext?.getContextUsage();
+            currentTokens = usage?.tokens ?? 0;
+          } catch { /* ignore */ }
 
-              let foundTier: RouterTier | undefined;
-              for (const t of tiersToTry) {
-                const tModels = [profile[t].model, ...(profile[t].fallbacks ?? [])];
-                if (tModels.some((modelRef) => checkModelSupportsImage(modelRef, state.currentModelRegistry))) {
-                  foundTier = t;
-                  break;
-                }
-              }
-
-              if (foundTier) {
-                decision = buildRoutingDecision(
-                  model.id,
-                  profile,
-                  foundTier,
-                  `Forced ${foundTier} tier because ${decision.tier} tier lacks image support.`,
-                  state.thinkingByProfile[model.id],
-                  false,
-                  decision.lastClassifierRunToolCount
-                );
-              } else {
-                decision.reasoning += ' No image-capable models found in any tier.';
-              }
-            } else {
-              decision.reasoning += ` Image support found in ${decision.tier} tier.`;
-            }
-          }
-
-          state.lastDecision = decision;
-          if (state.lastExtensionContext) {
-            if (state.debugEnabled) {
-              state.lastExtensionContext.ui.notify('Decision = ' + formatDecision(state.lastDecision), 'info')
-            }
-            actions.updateStatus(state.lastExtensionContext);
-          }
-
-          let modelsToTry = [decision.targetLabel, ...(profile[decision.tier].fallbacks ?? [])];
-          if (detectedImageInRecentContext) {
-            modelsToTry = modelsToTry.filter((modelRef) => checkModelSupportsImage(modelRef, state.currentModelRegistry));
-            if (modelsToTry.length === 0) {
-              modelsToTry = [decision.targetLabel];
-            }
-          }
-
+          const tiersToTry = ROUTER_TIERS.slice(0, ROUTER_TIERS.indexOf(decision.tier) + 1).reverse();
           const MAX_RETRIES_PER_MODEL = 2;
           let lastError: any;
           let success = false;
+          const triedModels = new Set<string>();
 
-          modelLoop: for (let i = 0; i < modelsToTry.length; i++) {
-            const modelRef = modelsToTry[i];
-            const { provider: targetProvider, modelId: targetModelId } = parseCanonicalModelRef(modelRef);
+          // Pass 1: Try models that satisfy both image support and context thresholds.
+          // Pass 2: Last resort — try models that satisfy image support but need context truncation.
+          attemptLoop: for (const pass of [1, 2]) {
+            for (const t of tiersToTry) {
+              const modelsInTier = [profile[t].model, ...(profile[t].fallbacks ?? [])];
+              for (const modelRef of modelsInTier) {
+                if (triedModels.has(modelRef)) continue;
 
-            if (targetProvider === 'router') continue;
+                if (detectedImageInRecentContext && !checkModelSupportsImage(modelRef, state.currentModelRegistry)) continue;
 
-            const targetModel = state.currentModelRegistry.find(targetProvider, targetModelId);
-            if (!targetModel) {
-              lastError = new Error(`Routed model not found: ${targetProvider}/${targetModelId}`);
-              continue;
-            }
+                const { provider: targetProvider, modelId: targetModelId } = parseCanonicalModelRef(modelRef);
+                const targetModel = state.currentModelRegistry?.find(targetProvider, targetModelId);
+                if (!targetModel) continue;
 
-            const auth = await state.currentModelRegistry.getApiKeyAndHeaders(targetModel);
-            if (!auth.ok || !auth.apiKey) {
-              lastError = new Error(
-                auth.ok
-                  ? `No API key for routed model: ${targetProvider}/${targetModelId}`
-                  : `Auth failed for routed model: ${targetProvider}/${targetModelId}: ${auth.error}`,
-              );
-              continue;
-            }
-
-            // Each model gets MAX_RETRIES_PER_MODEL attempts before moving to the next
-            for (let attempt = 1; attempt <= MAX_RETRIES_PER_MODEL; attempt++) {
-              try {
-                // HONESTY CHECK & AUTO-TRUNCATION
-                // If the picked model has a smaller context than what we reported, truncate now.
-                let effectiveContext = context;
                 const targetLimit = targetModel.contextWindow || 128_000;
-                if (targetLimit < model.contextWindow!) {
-                  effectiveContext = truncateContext(context, targetLimit);
-                }
+                const thresholdPercent =
+                  currentConfig.contextThresholdPercentOverrides?.[modelRef] ??
+                  currentConfig.defaultContextThresholdPercent;
+                const fitsContext = thresholdPercent === undefined || currentTokens <= Math.floor((thresholdPercent / 100) * targetLimit);
 
-                const thinkingOverride = actions.getThinkingOverride(model.id, decision.tier);
-                const delegatedReasoning =
-                  targetModel.reasoning && (thinkingOverride ?? decision.thinking) !== 'off'
-                    ? (thinkingOverride ?? decision.thinking)
-                    : undefined;
+                if (pass === 1 && !fitsContext) continue;
+                triedModels.add(modelRef);
 
-                pi.setThinkingLevel(delegatedReasoning ?? 'off');
-                if (state.lastExtensionContext) {
-                  if (delegatedReasoning) {
-                    state.lastExtensionContext.ui.setHiddenThinkingLabel?.(
-                      `Thinking (${targetProvider}/${targetModelId})...`,
+                // Update decision if it's an upgrade or requirement-driven change.
+                if (t !== decision.tier || modelRef !== decision.targetLabel) {
+                  if (t !== decision.tier) {
+                    const reqs: string[] = [];
+                    if (detectedImageInRecentContext) reqs.push('images');
+                    if (!fitsContext) reqs.push(`${currentTokens} tokens`);
+                    const upgradeReason = `Forced ${t} tier because ${decision.tier} tier lacks models supporting ${reqs.join(' and ')}.`;
+                    decision = buildRoutingDecision(
+                      model.id,
+                      profile,
+                      t,
+                      upgradeReason,
+                      state.thinkingByProfile[model.id],
+                      false,
+                      decision.lastClassifierRunToolCount,
                     );
+                    if (modelRef !== profile[t].model) decision.isFallback = true;
+                    decision.isContextTriggered = !fitsContext;
                   } else {
-                    state.lastExtensionContext.ui.setHiddenThinkingLabel?.();
+                    decision.isFallback = true;
+                    decision.reasoning += ` (Using ${modelRef} for requirements)`;
+                    if (!fitsContext) decision.isContextTriggered = true;
                   }
-                }
-
-                const delegatedStream = streamSimple(targetModel, effectiveContext, {
-                  ...options,
-                  apiKey: auth.apiKey,
-                  headers: auth.headers,
-                  ...(delegatedReasoning ? { reasoning: delegatedReasoning } : {}),
-                });
-
-                let contentReceived = false;
-                for await (const event of delegatedStream) {
-                  if (event.type === 'error' && !contentReceived) {
-                    throw new Error((event as any).error?.errorMessage || 'Model failed before sending content.');
-                  }
-                  const isContent =
-                    event.type === 'text_delta' ||
-                    event.type === 'thinking_delta' ||
-                    event.type === 'toolcall_delta' ||
-                    event.type === 'toolcall_end';
-                  if (isContent) contentReceived = true;
-                  stream.push(event);
-                }
-                if (modelRef !== decision.targetLabel) {
-                  // Update decision to reflect actual model used if it was a fallback
-                  decision.isFallback = true;
                   decision.targetLabel = modelRef;
                   decision.targetProvider = targetProvider;
                   decision.targetModelId = targetModelId;
-
-                  state.lastDecision = decision;
-                  if (state.lastExtensionContext) {
-                    actions.updateStatus(state.lastExtensionContext);
-                  }
                 }
 
-                success = true;
-                break modelLoop; // Success — exit both loops
-              } catch (err) {
-                lastError = err;
-                const remaining = MAX_RETRIES_PER_MODEL - attempt;
-                state.lastExtensionContext?.ui.notify(
-                  `Failed to delegate to model ${modelRef} (attempt ${attempt}/${MAX_RETRIES_PER_MODEL}): ${err}${remaining > 0 ? ` — ${remaining} retr${remaining === 1 ? 'y' : 'ies'} left` : ''}`,
-                  'warning',
-                );
+                state.lastDecision = decision;
+                if (state.lastExtensionContext) {
+                  if (state.debugEnabled)
+                    state.lastExtensionContext.ui.notify('Decision = ' + formatDecision(state.lastDecision), 'info');
+                  actions.updateStatus(state.lastExtensionContext);
+                }
+
+                // Authentication
+                const auth = await state.currentModelRegistry!.getApiKeyAndHeaders(targetModel);
+                if (!auth.ok || !auth.apiKey) {
+                  lastError = new Error(
+                    auth.ok ? `No API key for model: ${modelRef}` : `Auth failed for model: ${modelRef}: ${auth.error}`,
+                  );
+                  continue;
+                }
+
+                // Try delegation
+                for (let attempt = 1; attempt <= MAX_RETRIES_PER_MODEL; attempt++) {
+                  try {
+                    let effectiveContext = context;
+                    if (targetLimit < model.contextWindow!) {
+                      effectiveContext = truncateContext(context, targetLimit);
+                    }
+
+                    const thinkingOverride = actions.getThinkingOverride(model.id, decision.tier);
+                    const delegatedReasoning =
+                      targetModel.reasoning && (thinkingOverride ?? decision.thinking) !== 'off'
+                        ? (thinkingOverride ?? decision.thinking)
+                        : undefined;
+
+                    pi.setThinkingLevel(delegatedReasoning ?? 'off');
+                    if (state.lastExtensionContext) {
+                      if (delegatedReasoning) {
+                        state.lastExtensionContext.ui.setHiddenThinkingLabel?.(
+                          `Thinking (${targetProvider}/${targetModelId})...`,
+                        );
+                      } else {
+                        state.lastExtensionContext.ui.setHiddenThinkingLabel?.();
+                      }
+                    }
+
+                    const delegatedStream = streamSimple(targetModel, effectiveContext, {
+                      ...options,
+                      apiKey: auth.apiKey,
+                      headers: auth.headers,
+                      ...(delegatedReasoning ? { reasoning: delegatedReasoning } : {}),
+                    });
+
+                    let contentReceived = false;
+                    for await (const event of delegatedStream) {
+                      if (event.type === 'error' && !contentReceived) {
+                        throw new Error((event as any).error?.errorMessage || 'Model failed before sending content.');
+                      }
+                      const isContent =
+                        event.type === 'text_delta' ||
+                        event.type === 'thinking_delta' ||
+                        event.type === 'toolcall_delta' ||
+                        event.type === 'toolcall_end';
+                      if (isContent) contentReceived = true;
+                      stream.push(event);
+                    }
+                    success = true;
+                    break attemptLoop;
+                  } catch (err) {
+                    lastError = err;
+                    const remaining = MAX_RETRIES_PER_MODEL - attempt;
+                    state.lastExtensionContext?.ui.notify(
+                      `Failed to delegate to model ${modelRef} (attempt ${attempt}/${MAX_RETRIES_PER_MODEL}): ${err}${remaining > 0 ? ` — ${remaining} retr${remaining === 1 ? 'y' : 'ies'} left` : ''}`,
+                      'warning',
+                    );
+                  }
+                }
               }
             }
           }
