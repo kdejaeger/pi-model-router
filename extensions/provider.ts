@@ -139,7 +139,6 @@ export const registerRouterProvider = (
     lastDecision: RoutingDecision | undefined;
     readonly thinkingByProfile: RouterThinkingByProfile;
     readonly pinnedTierByProfile: RouterPinByProfile;
-    accumulatedCost: number;
     debugEnabled: boolean;
   },
   actions: {
@@ -218,7 +217,6 @@ export const registerRouterProvider = (
           state.routerEnabled = true;
 
           const pinnedTier = state.pinnedTierByProfile[model.id];
-          const isBudgetExceeded = currentConfig.maxSessionBudget !== undefined && state.accumulatedCost >= currentConfig.maxSessionBudget;
           const lastDecision = state.lastDecision;
 
           // Run heuristic analysis once (used for context trigger, classifier context, and fallback)
@@ -228,7 +226,6 @@ export const registerRouterProvider = (
             pinnedTier,
             currentConfig.phaseBias,
             currentConfig.rules,
-            isBudgetExceeded,
           );
 
           let decision: RoutingDecision = buildRoutingDecision(
@@ -365,12 +362,6 @@ export const registerRouterProvider = (
               isClassifierDecision,
               shouldRunClassifier ? contCount : lastDecision?.lastClassifierRunToolCount
             );
-
-            if (isBudgetExceeded && decision.tier === 'high') { // Budget re-check after classifier
-              decision.tier = 'medium';
-              decision.reasoning = `Budget exceeded. Downgraded classifier to medium. (Original: ${resolvedReasoning})`;
-              decision.isBudgetForced = true;
-            }
           } else if (!decision.isContextTriggered && !pinnedTier) { // No classifier, no pin — use heuristic analysis directly
             decision = buildRoutingDecision(
               model.id,
@@ -499,10 +490,6 @@ export const registerRouterProvider = (
 
                 let contentReceived = false;
                 for await (const event of delegatedStream) {
-                  if (event.type === 'done') {
-                    const cost = event.message.usage?.cost?.total ?? 0;
-                    state.accumulatedCost += cost;
-                  }
                   if (event.type === 'error' && !contentReceived) {
                     throw new Error((event as any).error?.errorMessage || 'Model failed before sending content.');
                   }

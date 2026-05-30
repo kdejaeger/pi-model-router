@@ -2,7 +2,7 @@
 
 The `pi-model-router` registers a custom logical provider (`router`) that exposes "profiles" as models (e.g., `router/auto`). For every turn, the router selects an underlying concrete model based on task complexity, conversation context, and user-defined rules.
 
-> For the full decision-pipeline reference (heuristic details, budget/context controls, fallback chains, image-aware escalation, Google thinking tool continuation, auto-context truncation, and thinking control), see [How Routing Works](../README.md#how-routing-works) in the README.
+> For the full decision-pipeline reference (heuristic details, context controls, fallback chains, image-aware escalation, Google thinking tool continuation, auto-context truncation, and thinking control), see [How Routing Works](../README.md#how-routing-works) in the README.
 
 ## Module Architecture
 
@@ -29,7 +29,7 @@ index.ts ──→ provider.ts (streamSimple)
                  │
                  ├─→ routing.ts (analyzePrompt)
                  │      Always runs: heuristic analysis (keywords, word count,
-                 │      tool count, phase-bias thresholds, rules, budget check,
+                 │      tool count, phase-bias thresholds, rules,
                  │      manual pin, context trigger → HeuristicAnalysis)
                  │
                  ├─→ Classifier gating (only when classifierModel configured):
@@ -47,7 +47,7 @@ index.ts ──→ provider.ts (streamSimple)
       │
       ▼
 ui.ts (update status line + widget)
-state.ts (persist decision, cost, history)
+state.ts (persist decision, history)
 ```
 
 ## State & Persistence
@@ -56,7 +56,7 @@ Router state is persisted using `pi.appendEntry` with a custom type `router-stat
 
 - Restore the active profile and pins across agent relaunches.
 - Maintain independent pins and state for different conversation branches via `sessionManager.getBranch()`.
-- Track accumulated session costs safely across restarts.
+- Maintains session state across restarts.
 
 ### Persisted Fields
 
@@ -69,10 +69,10 @@ Router state is persisted using `pi.appendEntry` with a custom type `router-stat
 | `widgetEnabled` | `boolean` | Widget visibility |
 | `lastDecision` | `RoutingDecision` | Most recent routing decision |
 | `lastNonRouterModel` | `string` | Last model used before switching to router |
-| `accumulatedCost` | `number` | Session cost accumulator (branch-safe) |
+
 | `debugHistory` | `RoutingDecision[]` | Recent routing decisions |
 
-> **Branch safety**: Because state is saved via `pi.appendEntry`, each conversation branch gets its own independent state. Switching branches restores the pins, cost, and history that were active on that branch.
+> **Branch safety**: Because state is saved via `pi.appendEntry`, each conversation branch gets its own independent state. Switching branches restores the pins and history that were active on that branch.
 
 ### Debug History
 

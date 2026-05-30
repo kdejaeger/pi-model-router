@@ -34,7 +34,6 @@ export interface RouterConfig {
   classifierCadence?: number; // Run the classifier every Nth tool continuation during long chains. Default: 10.
   phaseBias?: number;
   largeContextThreshold?: number;
-  maxSessionBudget?: number;
   rules?: RoutingRule[];
   profiles: Record<string, RouterProfile>;
 }
@@ -51,7 +50,6 @@ export interface RoutingDecision {
   isClassifier?: boolean;
   isFallback?: boolean;
   isContextTriggered?: boolean;
-  isBudgetForced?: boolean;
   isRuleMatched?: boolean;
   lastClassifierRunToolCount?: number; // Tool-continuation count when the classifier last ran
 }
@@ -60,7 +58,6 @@ export interface HeuristicAnalysis {
   suggestedTier: RouterTier;
   reasoning: string;
   isRuleMatched: boolean;
-  isBudgetForced: boolean;
 }
 
 export interface RouterPersistedState {
@@ -74,7 +71,6 @@ export interface RouterPersistedState {
   debugHistory?: RoutingDecision[];
   lastDecision?: RoutingDecision;
   lastNonRouterModel?: string;
-  accumulatedCost?: number;
   timestamp: number;
 }
 

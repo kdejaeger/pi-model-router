@@ -29,7 +29,6 @@ export const buildPersistedState = (
   debugHistory: RoutingDecision[],
   lastDecision: RoutingDecision | undefined,
   lastNonRouterModel: string | undefined,
-  accumulatedCost: number,
 ): RouterPersistedState => {
   return {
     enabled: routerEnabled,
@@ -42,7 +41,6 @@ export const buildPersistedState = (
     debugHistory,
     lastDecision,
     lastNonRouterModel,
-    accumulatedCost,
     timestamp: Date.now(),
   };
 };

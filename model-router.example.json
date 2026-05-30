@@ -7,7 +7,6 @@
   "classifierRunAfterToolFailures": 2,
   "classifierCadence": 10,
   "phaseBias": 0.5,
-  "maxSessionBudget": 1.0,
   "largeContextThreshold": 100000,
   "rules": [
     {

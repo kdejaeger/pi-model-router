@@ -35,7 +35,6 @@ export const registerCommands = (
     readonly thinkingByProfile: RouterThinkingByProfile;
     readonly lastDecision: RoutingDecision | undefined;
     lastNonRouterModel: string | undefined;
-    readonly accumulatedCost: number;
     debugEnabled: boolean;
     widgetEnabled: boolean;
     readonly debugHistory: RoutingDecision[];
@@ -194,10 +193,6 @@ export const registerCommands = (
       `Thinking overrides: ${formatThinkingSummary(state.thinkingByProfile)}`,
       `Widget: ${state.widgetEnabled ? 'on' : 'off'}`,
       `Phase bias: ${state.currentConfig.phaseBias}`,
-      `Session cost: $${state.accumulatedCost.toFixed(4)}` +
-        (state.currentConfig.maxSessionBudget
-          ? ` / $${state.currentConfig.maxSessionBudget.toFixed(2)}`
-          : ''),
       `Default profile: ${resolveProfileName(state.currentConfig, state.currentConfig.defaultProfile)}`,
       `Available profiles: ${names}`,
       `Last non-router model: ${formatModelRef(state.lastNonRouterModel)}`,
@@ -506,12 +501,7 @@ export const registerCommands = (
       if (state.debugHistory.length === 0) {
         ctx.ui.notify('No recent routing decisions.', 'info');
       } else {
-        const history = state.debugHistory
-          .map(
-            (d) =>
-              `[${new Date(d.timestamp).toLocaleTimeString()}] ${formatDecision(d)}`,
-          )
-          .join('\n');
+        const history = state.debugHistory.map((d) => `${formatDecision(d)}`).join('\n');
         ctx.ui.notify(`Recent Routing Decisions:\n${history}`, 'info');
       }
       return;
@@ -677,7 +667,7 @@ export const registerCommands = (
           ctx.ui.notify(
             [
               'Router Subcommands:',
-              '  status                      Show current status, profile, pin, cost, and last decision.',
+              '  status                      Show current status, profile, pin, and last decision.',
               '  profile [name]              Switch to a profile (enables router if off). Lists available if no name.',
               '  pin [profile] <tier|auto>   Force a tier (high|medium|low) for a profile or set to auto.',
               '  thinking [prof] [tier] <lv> Override thinking level for a profile/tier (off|minimal|...|xhigh|auto).',

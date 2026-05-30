@@ -16,7 +16,6 @@ const getDecisionFlags = (decision: RoutingDecision): string[] => {
   const flags: string[] = [];
   if (decision.isFallback) flags.push('fallback');
   if (decision.isContextTriggered) flags.push('context');
-  if (decision.isBudgetForced) flags.push('budget-limit');
   if (decision.isRuleMatched) flags.push('rule');
   return flags;
 };
@@ -35,8 +34,8 @@ const formatRoutingDetails = (
   return `${decision.tier}${flagsStr} -> ${decision.targetProvider}/${decision.targetModelId} (${effectiveThinking})`;
 };
 
-export const formatDecision = (decision: RoutingDecision): string => {
-  return `${decision.profile} -> ${decision.tier} -> ${decision.targetProvider}/${decision.targetModelId} (${decision.thinking}) - ${decision.reasoning}`;
+export const formatDecision = (d: RoutingDecision): string => {
+  return `[${new Date(d.timestamp).toLocaleTimeString()}] ${d.tier} -> ${d.targetProvider}/${d.targetModelId} (${d.thinking}) - ${d.reasoning}`;
 };
 
 export const formatPinSummary = (
@@ -74,7 +73,6 @@ export const updateStatus = (
   thinkingByProfile: RouterThinkingByProfile,
   lastDecision: RoutingDecision | undefined,
   lastNonRouterModel: string | undefined,
-  accumulatedCost: number,
   widgetEnabled: boolean,
   currentConfig: RouterConfig
 ) => {
@@ -108,10 +106,6 @@ export const updateStatus = (
     `Router: ${routerEnabled ? 'enabled' : 'disabled'}`,
     `Profile: ${statusProfile}${activeRouterProfile ? ' (active)' : ''}`,
     `Pin: ${activePin ?? 'auto'}`,
-    `Cost: $${accumulatedCost.toFixed(4)}` +
-      (currentConfig.maxSessionBudget
-        ? ` / $${currentConfig.maxSessionBudget.toFixed(2)}`
-        : ''),
   ];
   if (lastDecision && lastDecision.profile === statusProfile) {
     widgetLines.push(

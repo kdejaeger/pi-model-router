@@ -3,9 +3,9 @@
 [![npm version](https://img.shields.io/npm/v/@yeliu84/pi-model-router)](https://www.npmjs.com/package/@yeliu84/pi-model-router)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Intelligent per-turn model router extension** for the [pi-coding-agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent). Automatically selects between high, medium, and low-tier LLMs on every turn based on task intent, session budget, context size, and custom rules -- with automatic fallbacks, image-aware rerouting, context truncation, and phase awareness.
+**Intelligent per-turn model router extension** for the [pi-coding-agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent). Automatically selects between high, medium, and low-tier LLMs on every turn based on task intent, context size, and custom rules -- with automatic fallbacks, image-aware rerouting, context truncation, and phase awareness.
 
-> Think of it as an automatic transmission for your LLM -- it shifts gears up or down depending on what you're doing, so you never waste money on a trivial task or run out of reasoning power on a complex one.
+> Think of it as an automatic transmission for your LLM -- it shifts gears up or down depending on what you're doing, so you never waste compute on a trivial task or run out of reasoning power on a complex one.
 
 ---
 
@@ -157,7 +157,6 @@ There are two unrelated uses of `"auto"` in this project: (1) as a **profile nam
 | `classifierCadence` | `number` | `10` | Run the classifier every N tool continuations as a periodic re-check. Default: 10. Set to 0 to disable. |
 | `phaseBias` | `number` (0.0-1.0) | `0.5`        | Stickiness of the current routing phase. Higher values keep the router in the same tier longer during multi-turn conversations.                                                                                                                                                   |
 | `largeContextThreshold` | `number` | --           | **Optional.** Token count threshold. If session context usage exceeds this value, the router forces `high` tier regardless of other factors.                                                                                                                                      |
-| `maxSessionBudget` | `number` (USD) | --           | **Optional.** Maximum session spend in USD. Once exceeded, all `high` tier requests are automatically downgraded to `medium`.                                                                                                                                                     |
 | `rules` | `array` | --           | **Optional.** List of keyword-based routing rules (see [Custom Rules](#custom-rules)).                                                                                                                                                                                            |
 | `profiles` | `object` | _(required)_ | Map of profile definitions.                                                                                                                                                                                                                                                       |
 
@@ -202,7 +201,7 @@ The config system performs thorough validation on reload/startup and surfaces wa
 - Validates thinking levels against allowed values
 - Validates routing rule format
 - Reports missing/invalid profiles with fallback resolution
-- Normalizes `phaseBias` to range 0.0-1.0, and `largeContextThreshold`/`maxSessionBudget` to positive values only
+- Normalizes `phaseBias` to range 0.0-1.0, and `largeContextThreshold` to positive values only
 
 ---
 
@@ -229,7 +228,7 @@ All commands are accessible via `/router` in the pi chat interface. **Tab-comple
 
 ### `/router status`
 
-Show the current router status: enabled/disabled state, active profile and its pin, thinking overrides, widget on/off, phase bias, session cost and budget, last routing decision, debug mode, and history count.
+Show the current router status: enabled/disabled state, active profile and its pin, thinking overrides, widget on/off, phase bias, last routing decision, debug mode, and history count.
 
 ```
 /router
@@ -341,7 +340,7 @@ PIPELINE (always runs)
   ├─ analyzePrompt() — heuristic analysis (keyword/word-count/wc/phase-bias)
   ├─ Manual pin check → use pinned tier if set
   ├─ Custom rules → use configured tier if matched
-  ├─ Heuristic tier + budget check → advisory HeuristicAnalysis
+  ├─ Heuristic tier → advisory HeuristicAnalysis
   ├─ Context trigger (optional): force high if context is large
   └─ heuristicAnalysis is now ready
 
@@ -353,7 +352,7 @@ GATE 1: CLASSIFIER GATING (only when classifierModel is configured)
      ├─ Consecutive failures >= confFailN? → run (crisis)
      ├─ contCount crosses new cadence bucket? → run (periodic)
      └─ Otherwise → reuse previous decision (classifier or heuristic)
-  - Classifier result final (budget re-checked after) — heuristicAnalysis is
+  - Classifier result final — heuristicAnalysis is
     advisory input for the LLM classifier prompt
 
 POST-ROUTE CORRECTIONS (always apply)
@@ -385,7 +384,7 @@ Without an LLM classifier, the router uses these signals locally:
 
 ### Classifier Gating
 
-When the router has an LLM classifier configured (`classifierModel`), it doesn't run on every turn. Instead, the classifier is gated by smart triggers that avoid waste while catching real tier mismatches. **The classifier has final say on tier** (subject to budget re-checks and post-route corrections like image escalation) — heuristic analysis serves as advisory input to the LLM classifier prompt.
+When the router has an LLM classifier configured (`classifierModel`), it doesn't run on every turn. Instead, the classifier is gated by smart triggers that avoid waste while catching real tier mismatches. **The classifier has final say on tier** (post-route corrections like image escalation) — heuristic analysis serves as advisory input to the LLM classifier prompt.
 
 | Gate | Trigger                                                                                     | Reason |
 |---|---------------------------------------------------------------------------------------------|---|
@@ -398,9 +397,7 @@ All counters reset per user turn — each new user message is treated as a fresh
 
 When the classifier is skipped, the **previous routing decision** is reused directly. Post-route corrections (image escalation) still apply regardless.
 
-### Budget & Context Controls
-
-**Cost Budgeting** (`maxSessionBudget`): Once the accumulated session cost exceeds this USD limit, all `high` tier requests are automatically downgraded to `medium`. The budget is checked again after each classifier override. Cost tracking persists across session restarts via `accumulatedCost` in persisted state.
+### Context Controls
 
 **Context Trigger Upgrade** (`largeContextThreshold`): When the conversation context exceeds this token count (measured via `ctx.getContextUsage()`), the router **jumps directly to `high`** tier — it does not step up one level at a time. Since context usage is cumulative and only grows across turns (unless compaction reduces it), once the threshold is crossed, the router stays on `high` for the remainder of the session. This is intentional: a weaker model with a smaller context window might truncate or lose coherence on a large conversation, so the trigger ensures the full context is preserved for subsequent requests, even trivial ones.
 
@@ -461,14 +458,13 @@ Levels: `off | minimal | low | medium | high | xhigh`
 
 ### Session & Debugging
 
-**Persistent State:** Router state persists across agent restarts AND conversation branches via `pi.appendEntry` with a custom `router-state` entry type. Pins, thinking overrides, debug mode, widget visibility, debug history, the last routing decision, accumulated cost, and the last non-router model are all preserved. State is **branch-safe** -- different conversation branches maintain independent state using `sessionManager.getBranch()`.
+**Persistent State:** Router state persists across agent restarts AND conversation branches via `pi.appendEntry` with a custom `router-state` entry type. Pins, thinking overrides, debug mode, widget visibility, debug history, the last routing decision, and the last non-router model are all preserved. State is **branch-safe** -- different conversation branches maintain independent state using `sessionManager.getBranch()`.
 
 **Status Widget:** `/router widget on` shows a live widget in the pi TUI sidebar:
 ```
 Router: enabled
 Profile: balanced (active)
 Pin: auto
-Cost: $0.0123 / $1.00
 Route: medium -> google/gemini-flash-latest
 ```
 
@@ -490,7 +486,6 @@ Route: medium -> google/gemini-flash-latest
   "defaultProfile": "balanced",
   "classifierModel": "google/gemini-flash-latest",
   "phaseBias": 0.5,
-  "maxSessionBudget": 1.0,
   "largeContextThreshold": 100000,
   "rules": [
     { "matches": ["deploy", "production", "release"], "tier": "high", "reason": "Safety check for production tasks" },
@@ -512,7 +507,6 @@ Route: medium -> google/gemini-flash-latest
 {
   "defaultProfile": "cheap",
   "phaseBias": 0.3,
-  "maxSessionBudget": 0.5,
   "profiles": {
     "cheap": {
       "high":   { "model": "google/gemini-flash-latest",     "thinking": "low" },

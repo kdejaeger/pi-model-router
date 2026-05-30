@@ -23,11 +23,10 @@ Routing follows a tiered system (`high`, `medium`, `low`) and an ordered decisio
 1. **Manual Pin**: Use tier pinned via `/router pin` or `/router fix` if set.
 2. **Custom Rules**: Check keyword-based rules against the user prompt.
 3. **Heuristics + Phase Bias**: Local analysis (word count, keywords, tool usage, conversation length) with phase-behavior stickiness applied via threshold modulation.
-4. **Budget Check**: Downgrade to `medium` if `maxSessionBudget` is exceeded.
 
 ### Post-Heuristic Overrides (in `provider.ts`)
 1. **Context Trigger**: Upgrade to `high` if `largeContextThreshold` is reached.
-2. **LLM Classifier (Optional)**: Call `classifierModel` for intent categorization (only if no pin, no rule match, and no context trigger fired). Budget is re-checked after classifier override.
+2. **LLM Classifier (Optional)**: Call `classifierModel` for intent categorization (only if no pin, no rule match, and no context trigger fired).
 
 ### Post-Route Corrections
 1. **Google Thinking Tool Continuation**: Preserve the exact model/tier when a Google tool-result continuation is detected, to avoid thought-signature replay errors.

@@ -181,7 +181,6 @@ export const buildRoutingDecision = (
     isClassifier,
     lastClassifierRunToolCount,
     isRuleMatched: heuristicResult?.isRuleMatched,
-    isBudgetForced: heuristicResult?.isBudgetForced,
   };
 };
 
@@ -198,7 +197,6 @@ export const analyzePrompt = (
   pinnedTier?: RouterTier,
   phaseBias = 0.5,
   rules?: RoutingRule[],
-  isBudgetExceeded = false,
 ): HeuristicAnalysis => {
   const prompt = getLastUserText(context).toLowerCase();
 
@@ -313,18 +311,10 @@ export const analyzePrompt = (
     }
   }
 
-  let isBudgetForced = false;
-  if (isBudgetExceeded && tier === 'high') {
-    tier = 'medium';
-    reasoning = `Budget exceeded. Downgraded from high to medium tier. (Original: ${reasoning})`;
-    isBudgetForced = true;
-  }
-
   return {
     suggestedTier: tier,
     reasoning,
-    isRuleMatched,
-    isBudgetForced
+    isRuleMatched
   };
 };
 

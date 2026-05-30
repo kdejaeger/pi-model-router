@@ -40,7 +40,6 @@ const routerExtension = (pi: ExtensionAPI) => {
   let thinkingByProfile: RouterThinkingByProfile = {};
   let debugHistory: RoutingDecision[] = [];
   let lastNonRouterModel: string | undefined;
-  let accumulatedCost = 0;
   let lastExtensionContext: ExtensionContext | undefined;
   let lastConfigWarnings: string[] = [];
   let lastPersistedSnapshot: string | undefined;
@@ -77,7 +76,6 @@ const routerExtension = (pi: ExtensionAPI) => {
       debugHistory,
       lastDecision,
       lastNonRouterModel,
-      accumulatedCost,
     );
     const snapshot = JSON.stringify({
       ...state,
@@ -108,7 +106,6 @@ const routerExtension = (pi: ExtensionAPI) => {
         thinkingByProfile,
         lastDecision,
         lastNonRouterModel,
-        accumulatedCost,
         widgetEnabled,
         currentConfig
       ),
@@ -226,12 +223,6 @@ const routerExtension = (pi: ExtensionAPI) => {
           },
           thinkingByProfile,
           pinnedTierByProfile,
-          get accumulatedCost() {
-            return accumulatedCost;
-          },
-          set accumulatedCost(v) {
-            accumulatedCost = v;
-          },
           get debugEnabled() {
             return debugEnabled;
           },
@@ -266,7 +257,6 @@ const routerExtension = (pi: ExtensionAPI) => {
     thinkingByProfile = {};
     widgetEnabled = false;
     debugHistory = [];
-    accumulatedCost = 0;
     lastNonRouterModel =
       ctx.model && ctx.model.provider !== 'router'
         ? `${ctx.model.provider}/${ctx.model.id}`
@@ -303,7 +293,6 @@ const routerExtension = (pi: ExtensionAPI) => {
         ? [...savedState.debugHistory].slice(-MAX_DEBUG_HISTORY)
         : [];
       lastNonRouterModel = savedState.lastNonRouterModel ?? lastNonRouterModel;
-      accumulatedCost = savedState.accumulatedCost ?? 0;
     }
 
     await actions.ensureValidActiveRouterProfile(ctx);
@@ -357,9 +346,6 @@ const routerExtension = (pi: ExtensionAPI) => {
       },
       set lastNonRouterModel(v) {
         lastNonRouterModel = v;
-      },
-      get accumulatedCost() {
-        return accumulatedCost;
       },
       get debugEnabled() {
         return debugEnabled;
