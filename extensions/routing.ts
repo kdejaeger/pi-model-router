@@ -234,10 +234,11 @@ export const analyzePrompt = (
       const lowThreshold = Math.max(
         4,
         12 -
-          (previousDecision?.tier === 'medium' ||
-          previousDecision?.tier === 'high'
+          (
+            (previousDecision?.tier === 'medium' || previousDecision?.tier === 'high')
             ? phaseBias * 8
-            : 0),
+            : 0
+          ),
       );
 
       const keywordHints = {
