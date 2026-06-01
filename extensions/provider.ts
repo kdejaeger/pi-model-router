@@ -186,10 +186,12 @@ export const registerRouterProvider = (
       options?: SimpleStreamOptions,
     ): AssistantMessageEventStream => {
       const stream = createAssistantMessageEventStream();
+      const ctx = state.lastExtensionContext;
+      const modelRegistry = state.currentModelRegistry;
 
       (async () => {
         try {
-          if (!state.currentModelRegistry) {
+          if (!modelRegistry) {
             throw new Error('Router provider not initialized yet. Wait for session_start and retry.');
           }
           const profile = currentConfig.profiles[model.id];
@@ -207,7 +209,7 @@ export const registerRouterProvider = (
           const lastMsgWasTool = lastMessage?.role === 'toolResult';
 
           let decision: RoutingDecision;
-          
+
           const isGoogleContinuation =
             lastMsgWasTool &&
             lastDecision?.profile === model.id &&
@@ -229,9 +231,9 @@ export const registerRouterProvider = (
             if (currentConfig.classifierModel && !pinnedTier) {
               const toolResultsCount = countToolResultsSinceLastUserPrompt(context);
 
-              const shouldRunTheClassifier = shouldRunClassifier(currentConfig, context, lastDecision, lastMsgWasTool, toolResultsCount, state.debugEnabled, state.lastExtensionContext);
+              const shouldRunTheClassifier = shouldRunClassifier(currentConfig, context, lastDecision, lastMsgWasTool, toolResultsCount, state.debugEnabled, ctx);
               const classifierResult = shouldRunTheClassifier
-                ? await runClassifier(currentConfig, state.currentModelRegistry, context, lastDecision, heuristicAnalysis)
+                ? await runClassifier(currentConfig, modelRegistry, context, lastDecision, heuristicAnalysis)
                 : null;
 
               if (classifierResult) { // Use the result from the fresh classifier run
@@ -239,8 +241,8 @@ export const registerRouterProvider = (
                 resolvedReasoning = `Classifier: ${classifierResult.reasoning}`;
                 lastClassifierRunToolCount = toolResultsCount;
               } else {
-                if (shouldRunTheClassifier && state.debugEnabled && state.lastExtensionContext) {
-                  state.lastExtensionContext.ui.notify('Classifier returned no result', 'warning');
+                if (shouldRunTheClassifier && state.debugEnabled && ctx) {
+                  ctx.ui.notify('Classifier returned no result', 'warning');
                 }
                 if (lastDecision?.reasoning.startsWith('Classifier:')) { // If classifier failed or was skipped, reuse the previous classifier's decision
                   resolvedTier = lastDecision.tier;
@@ -255,10 +257,10 @@ export const registerRouterProvider = (
 
           let tokensUsed = 0;
           try {
-            const contextUsage = await state.lastExtensionContext?.getContextUsage();
+            const contextUsage = await ctx?.getContextUsage();
             tokensUsed = contextUsage?.tokens ?? 0;
           } catch {
-            state.lastExtensionContext?.ui.notify('Unable to get context usage (and determine tokens used) from pi','warning');
+            ctx?.ui.notify('Unable to get context usage (and determine tokens used) from pi','warning');
           }
 
           const detectedImageInRecentContext = imageDetectedInRecentContext(context);
@@ -276,27 +278,27 @@ export const registerRouterProvider = (
 
               if (pass === 2) { // sort models by context window descending to minimize truncation.
                 modelsInTier.sort((a, b) => {
-                  const limitA = resolveModelFromRef(a, state.currentModelRegistry)?.contextWindow || 0;
-                  const limitB = resolveModelFromRef(b, state.currentModelRegistry)?.contextWindow || 0;
+                  const limitA = resolveModelFromRef(a, modelRegistry)?.contextWindow || 0;
+                  const limitB = resolveModelFromRef(b, modelRegistry)?.contextWindow || 0;
                   return limitB - limitA;
                 });
               }
 
               for (const modelRef of modelsInTier) {
                 if (triedModels.has(modelRef)) continue;
-                if (detectedImageInRecentContext && !checkModelSupportsImage(modelRef, state.currentModelRegistry)) {
+                if (detectedImageInRecentContext && !checkModelSupportsImage(modelRef, modelRegistry)) {
                   failureReasons.push(`${modelRef} does not support images`);
                   continue;
                 }
 
-                const targetModel = resolveModelFromRef(modelRef, state.currentModelRegistry);
+                const targetModel = resolveModelFromRef(modelRef, modelRegistry);
                 if (!targetModel) {
                   failureReasons.push(`${modelRef} not found in registry`);
                   continue;
                 }
 
                 if (targetModel.contextWindow === undefined || targetModel.contextWindow === 0) {
-                  state.lastExtensionContext?.ui.notify(`Router warning: model ${modelRef} has no contextWindow in registry`, 'warning');
+                  ctx?.ui.notify(`Router warning: model ${modelRef} has no contextWindow in registry`, 'warning');
                 }
 
                 const thresholdPercent =
@@ -332,12 +334,12 @@ export const registerRouterProvider = (
                   Object.assign(decision, { targetProvider, targetModelId, targetLabel: modelRef, isFallback: modelRef !== profile[tier].model, isContextTriggered: !fitsContext });
                 }
 
-                if (state.lastExtensionContext) {
-                  if (state.debugEnabled) state.lastExtensionContext.ui.notify('Decision = ' + formatDecision(decision), 'info');
-                  actions.updateStatus(state.lastExtensionContext);
+                if (ctx) {
+                  if (state.debugEnabled) ctx.ui.notify('Decision = ' + formatDecision(decision), 'info');
+                  actions.updateStatus(ctx);
                 }
 
-                const auth = await state.currentModelRegistry!.getApiKeyAndHeaders(targetModel);
+                const auth = await modelRegistry!.getApiKeyAndHeaders(targetModel);
                 if (!auth.ok || !auth.apiKey) {
                   const reason = auth.ok
                     ? `No API key for model: ${modelRef}`
@@ -357,17 +359,17 @@ export const registerRouterProvider = (
                         ? (thinkingOverride ?? decision.thinking)
                         : undefined;
                     pi.setThinkingLevel(delegatedReasoning ?? 'off');
-                    if (state.lastExtensionContext) {
+                    if (ctx) {
                       if (delegatedReasoning) {
-                        state.lastExtensionContext.ui.setHiddenThinkingLabel?.(`Thinking (${targetProvider}/${targetModelId})...`);
+                        ctx.ui.setHiddenThinkingLabel?.(`Thinking (${targetProvider}/${targetModelId})...`);
                       } else {
-                        state.lastExtensionContext.ui.setHiddenThinkingLabel?.();
+                        ctx.ui.setHiddenThinkingLabel?.();
                       }
                     }
 
                     let effectiveContext = context;
                     if (!fitsContext) {
-                      state.lastExtensionContext?.ui.notify(`Context too large for ${modelRef}. Truncating now. Run /compact to avoid context loss.`, 'warning',);
+                      ctx?.ui.notify(`Context too large for ${modelRef}. Truncating now. Run /compact to avoid context loss.`, 'warning',);
                       effectiveContext = truncateContext(context, targetContextLimit);
                     }
 
@@ -401,7 +403,7 @@ export const registerRouterProvider = (
                   } catch (err) {
                     lastError = err;
                     const remaining = MAX_RETRIES_PER_MODEL - attempt;
-                    state.lastExtensionContext?.ui.notify(
+                    ctx?.ui.notify(
                       `Failed to delegate to model ${modelRef} (attempt ${attempt}/${MAX_RETRIES_PER_MODEL}): ${err}${remaining > 0 ? ` — ${remaining} retr${remaining === 1 ? 'y' : 'ies'} left` : ''}`,
                       'warning',
                     );

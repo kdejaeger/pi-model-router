@@ -105,8 +105,7 @@ const routerExtension = (pi: ExtensionAPI) => {
         thinkingByProfile,
         lastDecision,
         lastNonRouterModel,
-        widgetEnabled,
-        currentConfig
+        widgetEnabled
       ),
     reloadConfig: (
       ctx?: ExtensionContext,

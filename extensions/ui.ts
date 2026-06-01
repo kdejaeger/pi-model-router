@@ -77,8 +77,7 @@ export const updateStatus = (
   thinkingByProfile: RouterThinkingByProfile,
   lastDecision: RoutingDecision | undefined,
   lastNonRouterModel: string | undefined,
-  widgetEnabled: boolean,
-  currentConfig: RouterConfig
+  widgetEnabled: boolean
 ) => {
   const activeRouterProfile = routerEnabled ? selectedProfile : undefined;
   const statusProfile = selectedProfile;
