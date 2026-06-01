@@ -342,7 +342,6 @@ PIPELINE (always runs)
   ├─ Manual pin check → use pinned tier if set
   ├─ Custom rules → use configured tier if matched
   ├─ Heuristic tier → advisory HeuristicAnalysis
-  ├─ Context trigger (optional): force high if context is large
   └─ heuristicAnalysis is now ready
 
 GATE 1: CLASSIFIER GATING (only when classifierModel is configured)
@@ -359,10 +358,13 @@ GATE 1: CLASSIFIER GATING (only when classifierModel is configured)
 POST-ROUTE CORRECTIONS (always apply)
   - Image-aware escalation: upgrade tier if routed model
      doesn't support image attachments
+  - Context threshold enforcement: if context usage exceeds
+     threshold, re-search for a suitable model in current or
+     higher tiers (strict pass first, truncation pass as fallback)
 
 EXECUTION
   - Auto-context truncation: trim oldest messages if target
-     model's window is smaller than reported capacity
+     model's window is smaller than the profile's maximum window
   - Fallback chain: retry fallback models if primary fails
 ```
 
