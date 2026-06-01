@@ -364,7 +364,11 @@ export const registerRouterProvider = (
                       }
                     }
 
-                    const effectiveContext = fitsContext ? context : truncateContext(context, targetContextLimit);
+                    let effectiveContext = context;
+                    if (!fitsContext) {
+                      state.lastExtensionContext?.ui.notify(`Context window will be truncated to fit ${modelRef}.`, 'warning',);
+                      effectiveContext = truncateContext(context, targetContextLimit);
+                    }
 
                     const effectiveOptions = {
                       ...options,
