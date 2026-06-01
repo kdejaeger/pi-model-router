@@ -5,11 +5,15 @@
   "classifierModelThinking": "off",
   "classifierRunOnceAfterToolCount": 3,
   "classifierRunAfterToolFailures": 2,
-  "classifierCadence": 10,
-  "phaseBias": 0.5,
+  "classifierInterval": 10,
+  "tierStickiness": 0.5,
   "defaultContextThresholdPercent": 70,
   "contextThresholdPercentOverrides": {
-    "openrouter/deepseek/deepseek-v4-flash": 60
+    "openrouter/deepseek/deepseek-v4-flash": 60,
+    "openrouter/deepseek/deepseek-v4-pro": 50,
+    "openrouter/google/gemma-4-31b-it": 50,
+    "openrouter/google/gemini-3-flash-preview": 80,
+    "openrouter/openai/gpt-5.4-nano": 30
   },
   "rules": [
     {

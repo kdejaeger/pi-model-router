@@ -31,9 +31,9 @@ export interface RouterConfig {
   classifierModelThinking?: ThinkingLevel;
   classifierRunOnceAfterToolCount?: number; // Run the classifier once after this many tool continuations. Default: 3.
   classifierRunAfterToolFailures?: number; // Run the classifier after this many consecutive tool failures in a single turn. Default: 2.
-  classifierCadence?: number; // Run the classifier every Nth tool continuation during long chains. Default: 10.
-  phaseBias?: number;
-  defaultContextThresholdPercent?: number;
+  classifierInterval?: number; // Run the classifier every Nth tool continuation during long chains. Default: 10.
+  tierStickiness?: number;
+  defaultContextThresholdPercent: number;
   contextThresholdPercentOverrides?: Record<string, number>;
   rules?: RoutingRule[];
   profiles: Record<string, RouterProfile>;
@@ -48,10 +48,9 @@ export interface RoutingDecision {
   reasoning: string;
   thinking: ThinkingLevel;
   timestamp: number;
-  isClassifier?: boolean;
   isFallback?: boolean;
   isContextTriggered?: boolean;
-  isRuleMatched?: boolean;
+  isHeuristicRuleMatched?: boolean;
   lastClassifierRunToolCount?: number; // Tool-continuation count when the classifier last ran
 }
 

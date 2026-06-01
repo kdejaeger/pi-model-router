@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { getAgentDir } from '@earendil-works/pi-coding-agent';
+import { type Api, type Model } from '@earendil-works/pi-ai';
+import { getAgentDir, type ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
 import type {
   RouterConfig,
@@ -20,7 +21,8 @@ export const FALLBACK_CONFIG: RouterConfig = {
   classifierModelThinking: 'off',
   classifierRunOnceAfterToolCount: 3,
   classifierRunAfterToolFailures: 2,
-  classifierCadence: 10,
+  classifierInterval: 10,
+  defaultContextThresholdPercent: 90,
   profiles: {
     auto: {
       high: { model: 'openai/gpt-5.4-pro', thinking: 'off' },
@@ -101,9 +103,9 @@ export const mergeConfig = (
       override.classifierRunOnceAfterToolCount ?? base.classifierRunOnceAfterToolCount,
     classifierRunAfterToolFailures:
       override.classifierRunAfterToolFailures ?? base.classifierRunAfterToolFailures,
-    classifierCadence:
-      override.classifierCadence ?? base.classifierCadence,
-    phaseBias: override.phaseBias ?? base.phaseBias,
+    classifierInterval:
+      override.classifierInterval ?? base.classifierInterval,
+    tierStickiness: override.tierStickiness ?? base.tierStickiness,
     defaultContextThresholdPercent:
       override.defaultContextThresholdPercent ?? base.defaultContextThresholdPercent,
     contextThresholdPercentOverrides:
@@ -131,6 +133,22 @@ export const parseCanonicalModelRef = (
     );
   }
   return { provider, modelId };
+};
+
+/**
+ * Resolves a concrete model from a canonical reference string and a registry.
+ */
+export const resolveModelFromRef = (
+  modelRef: string,
+  modelRegistry: ExtensionContext['modelRegistry'] | undefined,
+): Model<Api> | undefined => {
+  if (!modelRegistry) return undefined;
+  try {
+    const { provider, modelId } = parseCanonicalModelRef(modelRef);
+    return modelRegistry.find(provider, modelId);
+  } catch {
+    return undefined;
+  }
 };
 
 export const normalizeTierConfig = (
@@ -247,16 +265,16 @@ export const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
     defaultProfile = fallbackProfile;
   }
 
-  const phaseBias =
-    typeof raw.phaseBias === 'number'
-      ? Math.max(0, Math.min(1, raw.phaseBias))
+  const tierStickiness =
+    typeof raw.tierStickiness === 'number'
+      ? Math.max(0, Math.min(1, raw.tierStickiness))
       : 0.5;
 
   const defaultContextThresholdPercent =
     typeof raw.defaultContextThresholdPercent === 'number' &&
     raw.defaultContextThresholdPercent > 0
       ? raw.defaultContextThresholdPercent
-      : undefined;
+      : FALLBACK_CONFIG.defaultContextThresholdPercent;
 
   const contextThresholdPercentOverrides = isObjectRecord(raw.contextThresholdPercentOverrides)
     ? (raw.contextThresholdPercentOverrides as Record<string, number>)
@@ -314,8 +332,8 @@ export const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
       classifierModelThinking,
       classifierRunOnceAfterToolCount: raw.classifierRunOnceAfterToolCount,
       classifierRunAfterToolFailures: raw.classifierRunAfterToolFailures,
-      classifierCadence: raw.classifierCadence,
-      phaseBias,
+      classifierInterval: raw.classifierInterval,
+      tierStickiness,
       defaultContextThresholdPercent,
       contextThresholdPercentOverrides,
       rules: rules.length > 0 ? rules : undefined,

@@ -4,7 +4,6 @@ import type {
 } from '@earendil-works/pi-coding-agent';
 import {
   type RouterConfig,
-  type RouterPersistedState,
   type RoutingDecision,
   type RouterPinByProfile,
   type RouterThinkingByProfile,
@@ -35,7 +34,7 @@ const routerExtension = (pi: ExtensionAPI) => {
     FALLBACK_CONFIG.defaultProfile,
   );
   let widgetEnabled = false;
-  let lastRegisteredModels = '';
+  let lastLoadedModelKeys = '';
   let pinnedTierByProfile: RouterPinByProfile = {};
   let thinkingByProfile: RouterThinkingByProfile = {};
   let debugHistory: RoutingDecision[] = [];
@@ -44,16 +43,16 @@ const routerExtension = (pi: ExtensionAPI) => {
   let lastConfigWarnings: string[] = [];
   let lastPersistedSnapshot: string | undefined;
   let isInitialized = false;
-  let isInternalModelSwitch = false;
+  let isRouterDelegating = false;
 
   const setModelInternally = async (
     model: NonNullable<ExtensionContext['model']>,
   ) => {
-    isInternalModelSwitch = true;
+    isRouterDelegating = true;
     try {
       return await pi.setModel(model);
     } finally {
-      isInternalModelSwitch = false;
+      isRouterDelegating = false;
     }
   };
 
@@ -188,11 +187,11 @@ const routerExtension = (pi: ExtensionAPI) => {
       registerRouterProvider(
         pi,
         {
-          get lastRegisteredModels() {
-            return lastRegisteredModels;
+          get lastLoadedModelKeys() {
+            return lastLoadedModelKeys;
           },
-          set lastRegisteredModels(v) {
-            lastRegisteredModels = v;
+          set lastLoadedModelKeys(v) {
+            lastLoadedModelKeys = v;
           },
           get currentConfig() {
             return currentConfig;
@@ -386,7 +385,7 @@ const routerExtension = (pi: ExtensionAPI) => {
   });
 
   pi.on('model_select', async (event, ctx) => {
-    if (!isInitialized || isInternalModelSwitch) return;
+    if (!isInitialized || isRouterDelegating) return;
     if (event.model.provider === 'router') {
       const profileName = resolveProfileName(currentConfig, event.model.id);
 

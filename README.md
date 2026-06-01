@@ -154,9 +154,9 @@ There are two unrelated uses of `"auto"` in this project: (1) as a **profile nam
 | `classifierModelThinking` | `ThinkingLevel` | `off` | Reasoning/thinking level for the classifier model calls. Defaults to `off` (no extended reasoning) to keep calls fast and cheap. |
 | `classifierRunOnceAfterToolCount` | `number` | `3` | Run the classifier once after this many tool continuations. Default: 3. Set to 0 to disable. |
 | `classifierRunAfterToolFailures` | `number` | `2` | Run the classifier after this many consecutive tool failures (counting from the tail). Default: 2. |
-| `classifierCadence` | `number` | `10` | Run the classifier every N tool continuations as a periodic re-check. Default: 10. Set to 0 to disable. |
-| `phaseBias` | `number` (0.0-1.0) | `0.5`        | Stickiness of the current routing phase. Higher values keep the router in the same tier longer during multi-turn conversations.                                                                                                                                                   |
-| `defaultContextThresholdPercent` | `number` | --           | **Optional.** Default percentage threshold of a model's context window. If session context usage exceeds this percentage, the router searches for a suitable model in the current or higher tiers. |
+| `classifierInterval` | `number` | `10` | Run the classifier every N tool continuations as a periodic re-check. Default: 10. Set to 0 to disable. |
+| `tierStickiness` | `number` (0.0-1.0) | `0.5`        | Stickiness of the current routing phase. Higher values keep the router in the same tier longer during multi-turn conversations.                                                                                                                                                   |
+| `defaultContextThresholdPercent` | `number` | `90`         | Default percentage threshold of a model's context window. If session context usage exceeds this percentage, the router searches for a suitable model in the current or higher tiers. |
 | `contextThresholdPercentOverrides` | `Record<string, number>` | --           | **Optional.** Map of model-specific threshold overrides (model slug -> percentage). |
 | `rules` | `array` | --           | **Optional.** List of keyword-based routing rules (see [Custom Rules](#custom-rules)).                                                                                                                                                                                            |
 | `profiles` | `object` | _(required)_ | Map of profile definitions.                                                                                                                                                                                                                                                       |
@@ -202,7 +202,7 @@ The config system performs thorough validation on reload/startup and surfaces wa
 - Validates thinking levels against allowed values
 - Validates routing rule format
 - Reports missing/invalid profiles with fallback resolution
-- Normalizes `phaseBias` to range 0.0-1.0, and `defaultContextThresholdPercent` to positive values only
+- Normalizes `tierStickiness` to range 0.0-1.0, and `defaultContextThresholdPercent` to positive values only
 
 ---
 
@@ -229,7 +229,7 @@ All commands are accessible via `/router` in the pi chat interface. **Tab-comple
 
 ### `/router status`
 
-Show the current router status: enabled/disabled state, active profile and its pin, thinking overrides, widget on/off, phase bias, last routing decision, debug mode, and history count.
+Show the current router status: enabled/disabled state, active profile and its pin, thinking overrides, widget on/off, tier stickiness, last routing decision, debug mode, and history count.
 
 ```
 /router
@@ -338,7 +338,7 @@ GATE 0: GOOGLE LOCK
      (skips EVERYTHING below)
 
 PIPELINE (always runs)
-  ├─ analyzePrompt() — heuristic analysis (keyword/word-count/wc/phase-bias)
+  ├─ makeHeuristicAnalysis() — heuristic analysis (keyword/word-count/wc/tier-stickiness)
   ├─ Manual pin check → use pinned tier if set
   ├─ Custom rules → use configured tier if matched
   ├─ Heuristic tier → advisory HeuristicAnalysis
@@ -351,7 +351,7 @@ GATE 1: CLASSIFIER GATING (only when classifierModel is configured)
   - Tool-result continuation?
      ├─ contCount >= confInitN (first crossing)? → run once
      ├─ Consecutive failures >= confFailN? → run (crisis)
-     ├─ contCount crosses new cadence bucket? → run (periodic)
+     ├─ contCount crosses new interval bucket? → run (periodic)
      └─ Otherwise → reuse previous decision (classifier or heuristic)
   - Classifier result final — heuristicAnalysis is
     advisory input for the LLM classifier prompt
@@ -392,7 +392,7 @@ When the router has an LLM classifier configured (`classifierModel`), it doesn't
 | **Google lock** | Previous model was Google with thinking, and this is a tool-result continuation             | Freezes to the same model — any change breaks thought-signature replay |
 | **Fresh feedback** | Tool-continuation count first reaches or exceeds `classifierRunOnceAfterToolCount` (default: 3) | Captures the assistant's first response + tool result after a new user message |
 | **Crisis** | Consecutive failed tool results (from the tail) ≥ `classifierRunAfterToolFailures` (default: 2)   | Model is struggling — reclassify to potentially upgrade tier |
-| **Cadence** | Tool-continuation count % `classifierCadence` === 0 (default: 10)                           | Periodic re-check for long-running turns where initial assessment might be stale |
+| **Interval** | Tool-continuation count % `classifierInterval` === 0 (default: 10)                           | Periodic re-check for long-running turns where initial assessment might be stale |
 
 All counters reset per user turn — each new user message is treated as a fresh task. The crisis gate counts **consecutive** failures from the tail: one successful tool result resets the count to 0, so it only fires when failures are actually piling up.
 
@@ -402,9 +402,9 @@ When the classifier is skipped, the **previous routing decision** is reused dire
 
 **Context & Image Requirements** (`defaultContextThresholdPercent`): When the conversation context exceeds this percentage of a model's window, or when images are detected, the router searches for a suitable model in the current or higher tiers. This check happens on every turn, but since context usage usually only grows across turns (unless compaction reduces it), the router will often stay in higher tiers once pushed there.
 
-**Tier Stickiness (Bias)** (`phaseBias`, 0.0-1.0, default `0.5`):
-- If the previous decision was `high` tier, the word-count high-threshold is lowered (`max(40, 120 - phaseBias x 80)`), making it easier to stay in high.
-- If the previous decision was `high` or `medium` tier, the low-threshold is lowered (`max(4, 12 - phaseBias x 8)`), requiring even fewer words to trigger a low-tier decision.
+**Tier Stickiness** (`tierStickiness`, 0.0-1.0, default `0.5`):
+- If the previous decision was `high` tier, the word-count high-threshold is lowered (`max(40, 120 - tierStickiness x 80)`), making it easier to stay in high.
+- If the previous decision was `high` or `medium` tier, the low-threshold is lowered (`max(4, 12 - tierStickiness x 8)`), requiring even fewer words to trigger a low-tier decision.
 - Stickiness only biases thresholds toward the current tier — it never overrides a clear signal.
 
 ### Fallback Chains
@@ -486,7 +486,7 @@ Route: medium -> google/gemini-flash-latest
 {
   "defaultProfile": "balanced",
   "classifierModel": "google/gemini-flash-latest",
-  "phaseBias": 0.5,
+  "tierStickiness": 0.5,
   "defaultContextThresholdPercent": 70,
   "rules": [
     { "matches": ["deploy", "production", "release"], "tier": "high", "reason": "Safety check for production tasks" },
@@ -507,7 +507,7 @@ Route: medium -> google/gemini-flash-latest
 ```json
 {
   "defaultProfile": "cheap",
-  "phaseBias": 0.3,
+  "tierStickiness": 0.3,
   "profiles": {
     "cheap": {
       "high":   { "model": "google/gemini-flash-latest",     "thinking": "low" },
@@ -523,7 +523,7 @@ Route: medium -> google/gemini-flash-latest
 ```json
 {
   "defaultProfile": "deep",
-  "phaseBias": 0.8,
+  "tierStickiness": 0.8,
   "profiles": {
     "deep": {
       "high":   { "model": "openai/o1-preview",          "thinking": "xhigh" },

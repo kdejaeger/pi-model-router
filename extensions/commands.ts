@@ -16,7 +16,7 @@ import {
   THINKING_LEVELS,
   ROUTER_PIN_VALUES,
   ROUTER_TIERS,
-  parseCanonicalModelRef,
+  resolveModelFromRef,
 } from './config';
 import {
   formatPinSummary,
@@ -192,7 +192,7 @@ export const registerCommands = (
       `Pins by profile: ${formatPinSummary(state.pinnedTierByProfile)}`,
       `Thinking overrides: ${formatThinkingSummary(state.thinkingByProfile)}`,
       `Widget: ${state.widgetEnabled ? 'on' : 'off'}`,
-      `Phase bias: ${state.currentConfig.phaseBias}`,
+      `Tier stickiness: ${state.currentConfig.tierStickiness}`,
       `Default profile: ${resolveProfileName(state.currentConfig, state.currentConfig.defaultProfile)}`,
       `Available profiles: ${names}`,
       `Last non-router model: ${formatModelRef(state.lastNonRouterModel)}`,
@@ -422,10 +422,7 @@ export const registerCommands = (
       ctx.ui.notify('No previous non-router model recorded. Use /model to pick a concrete model.', 'warning');
       return;
     }
-    const { provider, modelId } = parseCanonicalModelRef(
-      state.lastNonRouterModel,
-    );
-    const targetModel = ctx.modelRegistry.find(provider, modelId);
+    const targetModel = resolveModelFromRef(state.lastNonRouterModel, ctx.modelRegistry);
     if (!targetModel) {
       ctx.ui.notify(
         `Recorded non-router model is unavailable: ${state.lastNonRouterModel}`,

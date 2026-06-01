@@ -27,16 +27,16 @@ index.ts ──→ provider.ts (streamSimple)
                  │
                  ├─→ Google lock → preserve exact model for tool continuation
                  │
-                 ├─→ routing.ts (analyzePrompt)
+                 ├─→ routing.ts (makeHeuristicAnalysis)
                  │      Always runs: heuristic analysis (keywords, word count,
-                 │      tool count, phase-bias thresholds, rules,
+                 │      tool count, tier-stickiness thresholds, rules,
                  │      manual pin, context trigger → HeuristicAnalysis)
                  │
                  ├─→ Classifier gating (only when classifierModel configured):
                  │     ├─ New user message? → run classifier (final say)
                  │     ├─ Tool cont ≥ confInitN (first crossing)? → run once
                  │     ├─ Consecutive failures ≥ confFailN? → run (crisis)
-                 │     ├─ Cont crosses new cadence bucket? → run (periodic)
+                 │     ├─ Cont crosses new interval bucket? → run (periodic)
                  │     └─ Otherwise → reuse previous decision
                  │     heuristicAnalysis is advisory to the classifier
                  │

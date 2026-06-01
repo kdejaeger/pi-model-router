@@ -9,8 +9,7 @@ import type {
   HeuristicAnalysis,
   RouterConfig,
 } from './types';
-import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
-import { parseCanonicalModelRef, isRouterTier } from './config';
+import { parseCanonicalModelRef, resolveModelFromRef } from './config';
 
 export const extractTextFromContent = (
   content: string | Message['content'],
@@ -94,7 +93,7 @@ export const countToolResultsSinceLastUserPrompt = (
 
 /** Count consecutive failed tool results from the tail of the current turn.
  *  Resets to 0 as soon as a successful tool result is encountered. */
-export const countConsecutiveRecentToolFailuresSinceLastUserPrompt = (
+const countConsecutiveRecentToolFailuresSinceLastUserPrompt = (
   context: Context,
 ): number => {
   let count = 0;
@@ -151,23 +150,27 @@ export const buildRoutingDecision = (
   tier: RouterTier,
   reasoning: string,
   thinkingOverrides?: RouterThinkingByTier,
-  isClassifier?: boolean,
-  lastClassifierRunToolCount?: number,
-  heuristicResult?: HeuristicAnalysis,
+  lastClassifierRunToolCount?: number
 ): RoutingDecision => {
+
   const routedTierConf = profile[tier];
-  const { provider, modelId } = parseCanonicalModelRef(routedTierConf.model);
-  let baseThinking: ThinkingLevel;
-  if (routedTierConf.thinking != null) {
-    baseThinking = routedTierConf.thinking;
-  } else if (tier === 'high') {
-    baseThinking = 'high';
-  } else if (tier === 'low') {
-    baseThinking = 'low';
-  } else {
-    baseThinking = 'medium';
+  let baseThinking = routedTierConf.thinking;
+  if (!baseThinking) {
+    switch (tier) {
+      case 'high':
+        baseThinking = 'high';
+        break;
+      case 'low':
+        baseThinking = 'low';
+        break;
+      default:
+        baseThinking = 'medium';
+        break;
+    }
   }
   const effectiveThinking = thinkingOverrides?.[tier] ?? baseThinking;
+
+  const { provider, modelId } = parseCanonicalModelRef(routedTierConf.model);
 
   return {
     profile: profileName,
@@ -178,9 +181,7 @@ export const buildRoutingDecision = (
     reasoning,
     thinking: effectiveThinking,
     timestamp: Date.now(),
-    isClassifier,
-    lastClassifierRunToolCount,
-    isRuleMatched: heuristicResult?.isRuleMatched,
+    lastClassifierRunToolCount
   };
 };
 
@@ -191,11 +192,11 @@ export const buildRoutingDecision = (
  * for the LLM classifier (the classifier has final say). When no classifier is
  * configured, the heuristic analysis directly becomes the routing decision.
  */
-export const analyzePrompt = (
+export const makeHeuristicAnalysis = (
   context: Context,
   previousDecision: RoutingDecision | undefined,
   pinnedTier?: RouterTier,
-  phaseBias = 0.5,
+  tierStickiness = 0.5,
   rules?: RoutingRule[],
 ): HeuristicAnalysis => {
   const prompt = getLastUserText(context).toLowerCase();
@@ -229,14 +230,14 @@ export const analyzePrompt = (
       // Sticky bias: lower thresholds when continuing in the same tier
       const highThreshold = Math.max(
         40,
-        120 - (previousDecision?.tier === 'high' ? phaseBias * 80 : 0),
+        120 - (previousDecision?.tier === 'high' ? tierStickiness * 80 : 0),
       );
       const lowThreshold = Math.max(
         4,
         12 -
           (
             (previousDecision?.tier === 'medium' || previousDecision?.tier === 'high')
-            ? phaseBias * 8
+            ? tierStickiness * 8
             : 0
           ),
       );
@@ -361,6 +362,46 @@ Tier: [high|medium|low]
 Reasoning: [one concise sentence summarizing the request's complexity and why it fits the tier]`;
 };
 
+/**
+ * Determine if the classifier should be run based on the current context and configuration.
+ */
+export const shouldRunClassifier = (
+  currentConfig: RouterConfig,
+  context: Context,
+  lastDecision: RoutingDecision | undefined,
+  lastMsgWasTool: boolean,
+  toolResultsCount: number,
+  debugEnabled?: boolean,
+  lastExtensionContext?: ExtensionContext,
+): boolean => {
+  if (!lastMsgWasTool) return true;
+
+  const confInitN = currentConfig.classifierRunOnceAfterToolCount ?? 3;
+  const confFailN = currentConfig.classifierRunAfterToolFailures ?? 2;
+  const lastCls = lastDecision?.lastClassifierRunToolCount ?? 0;
+
+  const triggers: string[] = [];
+  if (confInitN > 0 && toolResultsCount >= confInitN && confInitN > lastCls) {
+    triggers.push(`init(≥${confInitN})`);
+  }
+  const failCount = countConsecutiveRecentToolFailuresSinceLastUserPrompt(context);
+  if (failCount >= confFailN) triggers.push(`fail(${failCount}≥${confFailN})`);
+  const confInterval = currentConfig.classifierInterval ?? 10;
+  if (confInterval > 0 && Math.floor(toolResultsCount / confInterval) > Math.floor(lastCls / confInterval)) {
+    triggers.push(`interval(%${confInterval})`);
+  }
+
+  if (debugEnabled && lastExtensionContext) {
+    lastExtensionContext.ui.notify(
+      triggers.length > 0
+        ? `RUN classifier — ${triggers.join(', ')} (cont:${toolResultsCount})`
+        : `SKIP classifier (cont:${toolResultsCount}, fail:${failCount})`,
+      'info',
+    );
+  }
+  return triggers.length > 0;
+};
+
 export const runClassifier = async (
   currentConfig: RouterConfig,
   modelRegistry: ExtensionContext['modelRegistry'],
@@ -370,11 +411,10 @@ export const runClassifier = async (
 ): Promise<{ tier: RouterTier; reasoning: string } | undefined> => {
   try {
     if (!currentConfig.classifierModel) return undefined;
-    const { provider, modelId } = parseCanonicalModelRef(currentConfig.classifierModel);
-    const thinking = currentConfig.classifierModelThinking;
-    const model = modelRegistry.find(provider, modelId);
+    const model = resolveModelFromRef(currentConfig.classifierModel, modelRegistry);
     if (!model) return undefined;
 
+    const thinking = currentConfig.classifierModelThinking;
     const auth = await modelRegistry.getApiKeyAndHeaders(model);
     if (!auth.ok || !auth.apiKey) return undefined;
 
@@ -396,18 +436,15 @@ export const runClassifier = async (
           }
         }
 
-        const lines = fullText.trim().split('\n');
-        const tierLine = lines.find((l) => l.toLowerCase().startsWith('tier:'));
-        const reasoningLine = lines.find((l) => l.toLowerCase().startsWith('reasoning:'));
+        const tierMatch = fullText.match(/tier:\s*(high|medium|low)/i);
+        const reasoningMatch = fullText.match(/reasoning:\s*(.+)/i);
 
-        if (tierLine) {
-          const tierValue = tierLine.split(':')[1].trim().toLowerCase();
-          if (isRouterTier(tierValue)) {
-            return {
-              tier: tierValue,
-              reasoning: reasoningLine ? reasoningLine.split(':')[1].trim() : 'Classifier decision.',
-            };
-          }
+        if (tierMatch) {
+          const tierValue = tierMatch[1].toLowerCase() as RouterTier;
+          return {
+            tier: tierValue,
+            reasoning: reasoningMatch ? reasoningMatch[1].trim() : 'Classifier decision.',
+          };
         }
       } catch (err) {
         if (attempt < MAX_CLASSIFIER_RETRIES) {
