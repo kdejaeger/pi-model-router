@@ -442,7 +442,7 @@ The router reports the **largest context window across all models in a profile**
 
 > **Limitation:** This assumes the `high` tier model always has the largest context window in the profile. If a lower tier has a larger window, the router won't use it -- it truncates to the `high` tier's capacity instead.
 
-Estimated using a conservative heuristic: **3 characters = 1 token**.
+Estimated using a conservative heuristic: **4 characters = 1 token**.
 
 This is a rough last-resort cut, not a replacement for pi's built-in session compaction (`/compact`).
 

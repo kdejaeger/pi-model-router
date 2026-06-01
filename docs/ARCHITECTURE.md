@@ -20,34 +20,38 @@ The extension is modularized for maintainability:
 ### Data Flow
 
 ```
-po or turn_end event
-      │
-      ▼
-index.ts ──→ provider.ts (streamSimple)
-                 │
-                 ├─→ Google lock → preserve exact model for tool continuation
-                 │
-                 ├─→ routing.ts (makeHeuristicAnalysis)
-                 │      Always runs: heuristic analysis (keywords, word count,
-                 │      tool count, tier-stickiness thresholds, rules,
-                 │      manual pin, context trigger → HeuristicAnalysis)
-                 │
-                 ├─→ Classifier gating (only when classifierModel configured):
-                 │     ├─ New user message? → run classifier (final say)
-                 │     ├─ Tool cont ≥ confInitN (first crossing)? → run once
-                 │     ├─ Consecutive failures ≥ confFailN? → run (crisis)
-                 │     ├─ Cont crosses new interval bucket? → run (periodic)
-                 │     └─ Otherwise → reuse previous decision
-                 │     heuristicAnalysis is advisory to the classifier
-                 │
-                 ├─→ Post-route corrections (image escalation)
-                 ├─→ Auto-context truncation
-                 ├─→ Delegate to target model
-                 └─→ Fallback chain on failure
-      │
-      ▼
-ui.ts (update status line + widget)
-state.ts (persist decision, history)
+session_start / model_select / turn_end (index.ts)
+      pi runtime calls router provider on turn
+            │
+            ▼
+      provider.ts streamSimple
+            │
+            ├─→ Google lock → preserve exact model for tool continuation
+            ├─→ routing.ts (makeHeuristicAnalysis)
+            │      Always runs: heuristic analysis (keywords, word count,
+            │      tool count, tier-stickiness thresholds, rules,
+            │      manual pin, context trigger → HeuristicAnalysis)
+            │
+            ├─→ Classifier gating (only when classifierModel configured):
+            │     ├─ New user message? → run classifier (final say)
+            │     ├─ Tool cont ≥ confInitN (first crossing)? → run once
+            │     ├─ Consecutive failures ≥ confFailN? → run (crisis)
+            │     ├─ Cont crosses new interval bucket? → run (periodic)
+            │     └─ Otherwise → reuse previous decision
+            │     heuristicAnalysis is advisory to the classifier
+            │
+            ├─→ Post-route corrections (image escalation)
+            ├─→ Auto-context truncation
+            ├─→ Delegate to target model
+            └─→ Fallback chain on failure
+            │
+            ▼
+      ui.ts (update status line + widget)
+      state.ts (persist decision, history)
+
+      session_start / model_select / turn_end (index.ts)
+        only restore, validate, or reassert the router model;
+        they do not perform routing themselves.
 ```
 
 ## State & Persistence
@@ -69,7 +73,6 @@ Router state is persisted using `pi.appendEntry` with a custom type `router-stat
 | `widgetEnabled` | `boolean` | Widget visibility |
 | `lastDecision` | `RoutingDecision` | Most recent routing decision |
 | `lastNonRouterModel` | `string` | Last model used before switching to router |
-
 | `debugHistory` | `RoutingDecision[]` | Recent routing decisions |
 
 > **Branch safety**: Because state is saved via `pi.appendEntry`, each conversation branch gets its own independent state. Switching branches restores the pins and history that were active on that branch.
