@@ -37,9 +37,10 @@ export const createErrorMessage = (model: Model<Api>, message: string): Assistan
 };
 
 /**
- * Heuristic token estimator (conservative: 3 characters per token)
+ * Heuristic token estimator aligned with pi's built-in compaction heuristic:
+ * 1 token ~= 4 characters. This is conservative and matches the core compaction path.
  */
-const estimateTokens = (text: string): number => Math.ceil(text.length / 3);
+const estimateTokens = (text: string): number => Math.ceil(text.length / 4);
 
 /**
  * Truncate context to fit within a target token limit by removing oldest messages.
@@ -366,7 +367,7 @@ export const registerRouterProvider = (
 
                     let effectiveContext = context;
                     if (!fitsContext) {
-                      state.lastExtensionContext?.ui.notify(`Context window will be truncated to fit ${modelRef}.`, 'warning',);
+                      state.lastExtensionContext?.ui.notify(`Context too large for ${modelRef}. Truncating now. Run /compact to avoid context loss.`, 'warning',);
                       effectiveContext = truncateContext(context, targetContextLimit);
                     }
 
