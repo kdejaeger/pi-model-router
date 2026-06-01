@@ -92,12 +92,12 @@ export const updateStatus = (
     const matchesPin = activePin ? lastDecision?.tier === activePin : true;
 
     if (lastDecision && matchesProfile && matchesPin) {
-      statusText = `router:${activeRouterProfile}${pinLabel} -> ${formatRoutingDetails(lastDecision, thinkingByProfile)}`;
+      statusText = `router${pinLabel}: ${formatRoutingDetails(lastDecision, thinkingByProfile)}`;
     } else {
-      statusText = `router:${activeRouterProfile}${pinLabel} -> waiting`;
+      statusText = `router${pinLabel}: waiting`;
     }
   } else {
-    statusText = `router:off (${selectedProfile}${pinLabel}) -> ${formatModelRef(lastNonRouterModel)}`;
+    statusText = `router:off -> ${formatModelRef(lastNonRouterModel)}`;
   }
   ctx.ui.setStatus('router', ctx.ui.theme.fg('dim', statusText));
 
