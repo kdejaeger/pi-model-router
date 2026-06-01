@@ -179,7 +179,7 @@ const routerExtension = (pi: ExtensionAPI) => {
       selectedProfile = resolvedProfile;
       routerEnabled = true;
       persistState();
-      pi.setThinkingLevel('off')
+      pi.setThinkingLevel('off');
       actions.updateStatus(ctx);
       return true;
     },
@@ -260,7 +260,6 @@ const routerExtension = (pi: ExtensionAPI) => {
       ctx.model && ctx.model.provider !== 'router'
         ? `${ctx.model.provider}/${ctx.model.id}`
         : lastNonRouterModel;
-    lastDecision = undefined;
 
     const entries = ctx.sessionManager.getBranch() as CustomSessionEntry[];
     const savedState = entries
@@ -277,6 +276,7 @@ const routerExtension = (pi: ExtensionAPI) => {
         savedState.selectedProfile,
       );
       routerEnabled = savedState.enabled;
+      lastDecision = savedState.lastDecision;
       pinnedTierByProfile = savedState.pinByProfile
         ? { ...savedState.pinByProfile }
         : {};
