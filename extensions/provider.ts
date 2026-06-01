@@ -256,7 +256,8 @@ export const registerRouterProvider = (
           try {
             const contextUsage = await state.lastExtensionContext?.getContextUsage();
             tokensUsed = contextUsage?.tokens ?? 0;
-          } catch { /* ignore */
+          } catch {
+            state.lastExtensionContext?.ui.notify('Unable to get context usage (and determine tokens used) from pi','warning');
           }
 
           const detectedImageInRecentContext = imageDetectedInRecentContext(context);
@@ -337,8 +338,11 @@ export const registerRouterProvider = (
 
                 const auth = await state.currentModelRegistry!.getApiKeyAndHeaders(targetModel);
                 if (!auth.ok || !auth.apiKey) {
-                  lastError = new Error(auth.ok ? `No API key for model: ${modelRef}` : `Auth failed for model: ${modelRef}: ${auth.error}`);
-                  failureReasons.push(`${modelRef} auth failed: ${lastError.message}`);
+                  const reason = auth.ok
+                    ? `No API key for model: ${modelRef}`
+                    : `Auth failed for model: ${modelRef}: ${auth.error}`;
+                  lastError = new Error(reason);
+                  failureReasons.push(`${modelRef} auth failed: ${reason}`);
                   continue;
                 }
 
