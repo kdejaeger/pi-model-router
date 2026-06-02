@@ -171,6 +171,18 @@ export const registerRouterProvider = (
     };
   });
 
+  if (state.currentModelRegistry) {
+    const invalidOverrides = Object.keys(
+      state.currentConfig.contextThresholdPercentOverrides ?? {},
+    ).filter((modelRef: string) => !resolveModelFromRef(modelRef, state.currentModelRegistry));
+
+    if (invalidOverrides.length > 0) {
+      throw new Error(
+        `Router configuration contains contextThresholdPercentOverrides for models that do not exist: ${invalidOverrides.map((modelRef) => JSON.stringify(modelRef)).join(', ')}`,
+      );
+    }
+  }
+
   const loadedModelKeys = models.map((m) => `${m.id}:${m.contextWindow}:${m.maxTokens}:${m.reasoning}`).join(',');
   if (state.lastLoadedModelKeys === loadedModelKeys) return; // models did not change, no need to re-register
 
@@ -369,7 +381,7 @@ export const registerRouterProvider = (
 
                     let effectiveContext = context;
                     if (!fitsContext) {
-                      ctx?.ui.notify(`Context too large for ${modelRef}. Truncating now. Run /compact to avoid context loss.`, 'warning',);
+                      ctx?.ui.notify(`Context too large for ${modelRef} (${thresholdPercent}% of ${targetContextWindow}). Truncating now. Run /compact to avoid context loss.`, 'warning',);
                       effectiveContext = truncateContext(context, targetContextLimit);
                     }
 

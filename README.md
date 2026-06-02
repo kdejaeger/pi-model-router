@@ -157,7 +157,7 @@ There are two unrelated uses of `"auto"` in this project: (1) as a **profile nam
 | `classifierInterval` | `number` | `10` | Run the classifier every N tool continuations as a periodic re-check. Default: 10. Set to 0 to disable. |
 | `tierStickiness` | `number` (0.0-1.0) | `0.5`        | Stickiness of the current routing phase. Higher values keep the router in the same tier longer during multi-turn conversations.                                                                                                                                                   |
 | `defaultContextThresholdPercent` | `number` | `90`         | Default percentage threshold of a model's context window. If session context usage exceeds this percentage, the router searches for a suitable model in the current or higher tiers. |
-| `contextThresholdPercentOverrides` | `Record<string, number>` | --           | **Optional.** Map of model-specific threshold overrides (model slug -> percentage). |
+| `contextThresholdPercentOverrides` | `Record<string, number>` | -- | **Optional.** Per-model context threshold overrides. Keys are canonical model refs in `"provider/model"` format. Values are the percentage of that model's context window that triggers an upgrade search. These take precedence over `defaultContextThresholdPercent`. Keys that do not match known models cause a startup error. See [Context Threshold Overrides](#context-threshold-overrides). |
 | `rules` | `array` | --           | **Optional.** List of keyword-based routing rules (see [Custom Rules](#custom-rules)).                                                                                                                                                                                            |
 | `profiles` | `object` | _(required)_ | Map of profile definitions.                                                                                                                                                                                                                                                       |
 
@@ -172,6 +172,21 @@ Each profile defines three **tiers** (`high`, `medium`, `low`). Each tier config
 | `fallbacks` | `string[]` | -- | **Optional.** Ordered list of fallback model refs. If the primary model fails, the router retries each fallback in sequence before surfacing an error. |
 
 **Valid thinking levels** (from least to most reasoning): `off`, `minimal`, `low`, `medium`, `high`, `xhigh`
+
+### Context Threshold Overrides
+
+Use `contextThresholdPercentOverrides` to tune the context threshold for specific models. Keys must be canonical model refs in `"provider/model"` format. Values are percentages; lower values cause the router to consider upgrading sooner.
+
+```json
+{
+  "contextThresholdPercentOverrides": {
+    "openrouter/deepseek/deepseek-v4-flash": 60,
+    "openrouter/deepseek/deepseek-v4-pro": 50,
+    "openai-codex/gpt-5.5": 60,
+    "openrouter/google/gemini-3.1-pro-preview": 18
+  }
+}
+```
 
 ### Custom Rules
 
@@ -198,11 +213,12 @@ Rules let you pin a tier based on keywords in the user's prompt. They are checke
 
 The config system performs thorough validation on reload/startup and surfaces warnings via the notification system:
 
-- Validates all model refs are in `provider/model` format
+- Validates all profile model refs are in `provider/model` format
 - Validates thinking levels against allowed values
 - Validates routing rule format
 - Reports missing/invalid profiles with fallback resolution
 - Normalizes `tierStickiness` to range 0.0-1.0, and `defaultContextThresholdPercent` to positive values only
+- Validates `contextThresholdPercentOverrides` keys against known models; unknown keys cause a startup error
 
 ---
 

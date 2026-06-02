@@ -1,7 +1,6 @@
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type {
   RoutingDecision,
-  RouterConfig,
   RouterPinByProfile,
   RouterThinkingByProfile,
 } from './types';
