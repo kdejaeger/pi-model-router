@@ -19,7 +19,6 @@ const getDecisionFlags = (decision: RoutingDecision): string[] => {
 
 const formatRoutingDetails = (
   decision: RoutingDecision,
-  thinkingByProfile: RouterThinkingByProfile,
 ): string => {
   const flags = getDecisionFlags(decision);
   const flagsStr = flags.length > 0 ? ` [${flags.join(',')}]` : '';
@@ -62,7 +61,6 @@ export const updateStatus = (
   routerEnabled: boolean,
   selectedProfile: string,
   pinnedTierByProfile: RouterPinByProfile,
-  thinkingByProfile: RouterThinkingByProfile,
   lastDecision: RoutingDecision | undefined,
   lastNonRouterModel: string | undefined,
   widgetEnabled: boolean
@@ -79,7 +77,7 @@ export const updateStatus = (
     const matchesPin = activePin ? lastDecision?.tier === activePin : true;
 
     if (lastDecision && matchesProfile && matchesPin) {
-      statusText = `router${pinLabel}: ${formatRoutingDetails(lastDecision, thinkingByProfile)}`;
+      statusText = `router${pinLabel}: ${formatRoutingDetails(lastDecision)}`;
     } else {
       statusText = `router${pinLabel}: waiting`;
     }
@@ -100,7 +98,7 @@ export const updateStatus = (
   ];
   if (lastDecision && lastDecision.profile === statusProfile) {
     widgetLines.push(
-      `Route: ${formatRoutingDetails(lastDecision, thinkingByProfile)}`,
+      `Route: ${formatRoutingDetails(lastDecision)}`,
     );
   } else if (!routerEnabled && lastNonRouterModel) {
     widgetLines.push(`Fallback: ${lastNonRouterModel}`);

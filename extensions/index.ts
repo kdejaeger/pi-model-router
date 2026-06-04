@@ -102,7 +102,6 @@ const routerExtension = (pi: ExtensionAPI) => {
         routerEnabled,
         selectedProfile,
         pinnedTierByProfile,
-        thinkingByProfile,
         lastDecision,
         lastNonRouterModel,
         widgetEnabled
