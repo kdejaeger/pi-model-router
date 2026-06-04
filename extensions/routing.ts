@@ -1,19 +1,17 @@
-import { streamSimple, type Context, type Message } from '@earendil-works/pi-ai';
+import { type Context, type Message, streamSimple } from '@earendil-works/pi-ai';
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type {
-  RouterTier,
-  RouterProfile,
-  RoutingDecision,
-  RoutingRule,
-  RouterThinkingByTier,
   HeuristicAnalysis,
   RouterConfig,
+  RouterProfile,
+  RouterThinkingByTier,
+  RouterTier,
+  RoutingDecision,
+  RoutingRule,
 } from './types';
 import { parseCanonicalModelRef, resolveModelFromRef } from './config';
 
-export const extractTextFromContent = (
-  content: string | Message['content'],
-): string => {
+export const extractTextFromContent = (content: string | Message['content']): string => {
   if (typeof content === 'string') {
     return content;
   }
@@ -21,8 +19,7 @@ export const extractTextFromContent = (
     .map((part) => {
       if (part.type === 'text') return part.text;
       if (part.type === 'thinking') return part.thinking;
-      if (part.type === 'toolCall')
-        return `${part.name} ${JSON.stringify(part.arguments)}`;
+      if (part.type === 'toolCall') return `${part.name} ${JSON.stringify(part.arguments)}`;
       return '';
     })
     .filter(Boolean)
@@ -44,10 +41,7 @@ export const getLastUserText = (context: Context): string => {
   return '';
 };
 
-export const getRecentConversationText = (
-  context: Context,
-  limit = 6,
-): string => {
+export const getRecentConversationText = (context: Context, limit = 6): string => {
   return context.messages
     .slice(-limit)
     .map((message) => {
@@ -79,9 +73,7 @@ export const getRecentConversationText = (
 };
 
 /** Count tool results since the last user message (current turn only). */
-export const countToolResultsSinceLastUserPrompt = (
-  context: Context,
-): number => {
+export const countToolResultsSinceLastUserPrompt = (context: Context): number => {
   let count = 0;
   for (let i = context.messages.length - 1; i >= 0; i--) {
     const msg = context.messages[i] as Message;
@@ -93,9 +85,7 @@ export const countToolResultsSinceLastUserPrompt = (
 
 /** Count consecutive failed tool results from the tail of the current turn.
  *  Resets to 0 as soon as a successful tool result is encountered. */
-const countConsecutiveRecentToolFailuresSinceLastUserPrompt = (
-  context: Context,
-): number => {
+const countConsecutiveRecentToolFailuresSinceLastUserPrompt = (context: Context): number => {
   let count = 0;
   for (let i = context.messages.length - 1; i >= 0; i--) {
     const msg = context.messages[i] as Message;
@@ -119,30 +109,67 @@ export const containsAny = (text: string, keywords: string[]): boolean => {
 };
 
 const EXPLICIT_HIGH_HINTS = [
-  'best', 'deep', 'deeply', 'carefully', 'thoroughly', 'robust',
-  'comprehensive', 'step by step', 'think hard', 'highest quality',
+  'best',
+  'deep',
+  'deeply',
+  'carefully',
+  'thoroughly',
+  'robust',
+  'comprehensive',
+  'step by step',
+  'think hard',
+  'highest quality',
 ];
-const EXPLICIT_LOW_HINTS = [
-  'fast', 'cheap', 'quick', 'quickly', 'brief', 'briefly',
-  'one sentence', 'one line', 'tiny', 'small',
-];
+const EXPLICIT_LOW_HINTS = ['fast', 'cheap', 'quick', 'quickly', 'brief', 'briefly', 'one sentence', 'one line', 'tiny', 'small'];
 const PLANNING_KEYWORDS = [
-  'plan', 'planning', 'architecture', 'architect', 'design', 'tradeoff', 'trade-off',
-  'research', 'investigate', 'root cause', 'analyze', 'analysis',
-  'migration', 'strategy', 'compare', 'options', 'approach',
+  'plan',
+  'planning',
+  'architecture',
+  'architect',
+  'design',
+  'tradeoff',
+  'trade-off',
+  'research',
+  'investigate',
+  'root cause',
+  'analyze',
+  'analysis',
+  'migration',
+  'strategy',
+  'compare',
+  'options',
+  'approach',
 ];
 const SUMMARY_KEYWORDS = [
-  'summarize', 'summary', 'changelog', 'rewrite', 'reformat', 'format',
-  'rename', 'explain briefly', 'recap', 'tl;dr',
+  'summarize',
+  'summary',
+  'changelog',
+  'rewrite',
+  'reformat',
+  'format',
+  'rename',
+  'explain briefly',
+  'recap',
+  'tl;dr',
 ];
 const IMPLEMENTATION_KEYWORDS = [
-  'implement', 'code', 'fix', 'update', 'edit', 'write', 'refactor',
-  'add tests', 'patch', 'change', 'apply', 'continue', 'resume',
-  'make the changes', 'go ahead',
+  'implement',
+  'code',
+  'fix',
+  'update',
+  'edit',
+  'write',
+  'refactor',
+  'add tests',
+  'patch',
+  'change',
+  'apply',
+  'continue',
+  'resume',
+  'make the changes',
+  'go ahead',
 ];
-const LOOKUP_KEYWORDS = [
-  'where is', 'which file', 'show me', 'list', 'what files', 'find', 'grep',
-];
+const LOOKUP_KEYWORDS = ['where is', 'which file', 'show me', 'list', 'what files', 'find', 'grep'];
 
 export const buildRoutingDecision = (
   profileName: string,
@@ -150,9 +177,8 @@ export const buildRoutingDecision = (
   tier: RouterTier,
   reasoning: string,
   thinkingOverrides?: RouterThinkingByTier,
-  lastClassifierRunToolCount?: number
+  lastClassifierRunToolCount?: number,
 ): RoutingDecision => {
-
   const routedTierConf = profile[tier];
   let baseThinking = routedTierConf.thinking;
   if (!baseThinking) {
@@ -181,13 +207,13 @@ export const buildRoutingDecision = (
     reasoning,
     thinking: effectiveThinking,
     timestamp: Date.now(),
-    lastClassifierRunToolCount
+    lastClassifierRunToolCount,
   };
 };
 
 /**
  * Analyze a user prompt and conversation context using local heuristics.
- * 
+ *
  * When a classifier model is configured, this analysis is used as advisory input
  * for the LLM classifier (the classifier has final say). When no classifier is
  * configured, the heuristic analysis directly becomes the routing decision.
@@ -212,14 +238,10 @@ export const makeHeuristicAnalysis = (
     // Check custom rules first
     if (rules) {
       for (const rule of rules) {
-        const matches = Array.isArray(rule.matches)
-          ? rule.matches
-          : [rule.matches];
+        const matches = Array.isArray(rule.matches) ? rule.matches : [rule.matches];
         if (containsAny(prompt, matches)) {
           tier = rule.tier;
-          reasoning =
-            rule.reason ??
-            `Matched custom routing rule for: ${matches.join(', ')}`;
+          reasoning = rule.reason ?? `Matched custom routing rule for: ${matches.join(', ')}`;
           isRuleMatched = true;
           break;
         }
@@ -228,18 +250,10 @@ export const makeHeuristicAnalysis = (
 
     if (!isRuleMatched) {
       // Sticky bias: lower thresholds when continuing in the same tier
-      const highThreshold = Math.max(
-        40,
-        120 - (previousDecision?.tier === 'high' ? tierStickiness * 80 : 0),
-      );
+      const highThreshold = Math.max(40, 120 - (previousDecision?.tier === 'high' ? tierStickiness * 80 : 0));
       const lowThreshold = Math.max(
         4,
-        12 -
-          (
-            (previousDecision?.tier === 'medium' || previousDecision?.tier === 'high')
-            ? tierStickiness * 8
-            : 0
-          ),
+        12 - (previousDecision?.tier === 'medium' || previousDecision?.tier === 'high' ? tierStickiness * 8 : 0),
       );
 
       const keywordHints = {
@@ -265,12 +279,7 @@ export const makeHeuristicAnalysis = (
       } else if (keywordHints.summary) {
         tier = 'low';
         reasoning = 'Detected summary or lightweight transformation keywords.';
-      } else if (
-        keywordHints.planning ||
-        prompt.startsWith('why ') ||
-        wordCount >= highThreshold ||
-        multiLinePrompt
-      ) {
+      } else if (keywordHints.planning || prompt.startsWith('why ') || wordCount >= highThreshold || multiLinePrompt) {
         tier = 'high';
         reasoning =
           previousDecision?.tier === 'high'
@@ -279,24 +288,13 @@ export const makeHeuristicAnalysis = (
       } else if (keywordHints.implementation) {
         tier = 'medium';
         reasoning = 'Detected implementation-oriented work with bounded execution scope.';
-      } else if (
-        keywordHints.lookup &&
-        wordCount <= 24 &&
-        toolResultCountSinceLastUserPrompt === 0
-      ) {
+      } else if (keywordHints.lookup && wordCount <= 24 && toolResultCountSinceLastUserPrompt === 0) {
         tier = 'low';
         reasoning = 'Detected a short read-only lookup request.';
-      } else if (
-        previousDecision?.tier === 'high' &&
-        toolResultCountSinceLastUserPrompt === 0 &&
-        wordCount > lowThreshold
-      ) {
+      } else if (previousDecision?.tier === 'high' && toolResultCountSinceLastUserPrompt === 0 && wordCount > lowThreshold) {
         tier = 'high';
         reasoning = 'Kept the high tier bias because the conversation still looks exploratory.';
-      } else if (
-        previousDecision?.tier === 'medium' ||
-        recentConversation.includes('plan:')
-      ) {
+      } else if (previousDecision?.tier === 'medium' || recentConversation.includes('plan:')) {
         tier = 'medium';
         const reasons: string[] = [];
         if (previousDecision?.tier === 'medium') {
@@ -316,7 +314,7 @@ export const makeHeuristicAnalysis = (
   return {
     suggestedTier: tier,
     reasoning,
-    isRuleMatched
+    isRuleMatched,
   };
 };
 
@@ -408,6 +406,7 @@ export const runClassifier = async (
   context: Context,
   previousDecision: RoutingDecision | undefined,
   heuristicAnalysis?: HeuristicAnalysis,
+  extCtx?: ExtensionContext,
 ): Promise<{ tier: RouterTier; reasoning: string } | undefined> => {
   try {
     if (!currentConfig.classifierModel) return undefined;
@@ -421,8 +420,8 @@ export const runClassifier = async (
     const classifierPrompt = buildClassifierPrompt(context, previousDecision, heuristicAnalysis);
     const classifierContext: Context = { messages: [{ role: 'user', content: classifierPrompt, timestamp: Date.now() }] };
 
-    const MAX_CLASSIFIER_RETRIES = 2;
-    for (let attempt = 1; attempt <= MAX_CLASSIFIER_RETRIES; attempt++) {
+    const MAX_CLASSIFIER_ATTEMPTS = 3;
+    for (let attempt = 1; attempt <= MAX_CLASSIFIER_ATTEMPTS; attempt++) {
       try {
         const stream = streamSimple(model, classifierContext, {
           apiKey: auth.apiKey,
@@ -431,9 +430,8 @@ export const runClassifier = async (
         });
         let fullText = '';
         for await (const event of stream) {
-          if (event.type === 'text_delta' && typeof (event as any).delta === 'string') {
-            fullText += (event as any).delta;
-          }
+          if (event.type === 'error') throw new Error(event.error?.errorMessage ?? 'Unknown classifier error');
+          if (event.type === 'text_delta') fullText += event.delta;
         }
 
         const tierMatch = fullText.match(/tier:\s*(high|medium|low)/i);
@@ -447,10 +445,15 @@ export const runClassifier = async (
           };
         }
       } catch (err) {
-        if (attempt < MAX_CLASSIFIER_RETRIES) {
-          // Retry on next iteration
-        } else {
-          throw err; // Last attempt failed — let outer catch handle it
+        const errMsg = (err as Error)?.message ?? String(err);
+        if (errMsg) {
+          extCtx?.ui.notify(`[router] Classifier error (attempt ${attempt}/${MAX_CLASSIFIER_ATTEMPTS}): ${errMsg}`, 'warning');
+        }
+        if (attempt < MAX_CLASSIFIER_ATTEMPTS) {
+          const detectedStatus = /^\d+|got status: \d+|Too Many Requests|rate.?limit/i.test(errMsg) ? 429 : undefined;
+          const waitMs = detectedStatus === 429 ? attempt * 3000 : 1000;
+          extCtx?.ui.notify(`[router] Retrying in ${waitMs}ms...`, 'warning');
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
         }
       }
     }

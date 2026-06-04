@@ -5,12 +5,6 @@ import type {
   RouterThinkingByProfile,
 } from './types';
 
-const getEffectiveThinking = (
-  thinkingByProfile: RouterThinkingByProfile,
-  profileName: string,
-  decision: RoutingDecision,
-) => thinkingByProfile[profileName]?.[decision.tier] ?? decision.thinking;
-
 const getDecisionFlags = (decision: RoutingDecision): string[] => {
   const flags: string[] = [];
   if (decision.reasoning.startsWith('Classifier:')) {
@@ -27,14 +21,9 @@ const formatRoutingDetails = (
   decision: RoutingDecision,
   thinkingByProfile: RouterThinkingByProfile,
 ): string => {
-  const effectiveThinking = getEffectiveThinking(
-    thinkingByProfile,
-    decision.profile,
-    decision,
-  );
   const flags = getDecisionFlags(decision);
   const flagsStr = flags.length > 0 ? ` [${flags.join(',')}]` : '';
-  return `${decision.tier}${flagsStr} -> ${decision.targetProvider}/${decision.targetModelId} (${effectiveThinking})`;
+  return `${decision.tier}${flagsStr} -> ${decision.targetProvider}/${decision.targetModelId}`;
 };
 
 export const formatDecision = (d: RoutingDecision): string => {
@@ -107,7 +96,7 @@ export const updateStatus = (
   const widgetLines = [
     `Router: ${routerEnabled ? 'enabled' : 'disabled'}`,
     `Profile: ${statusProfile}${activeRouterProfile ? ' (active)' : ''}`,
-    `Pin: ${activePin ?? 'auto'}`,
+    `Pin: ${activePin ?? 'auto'}`
   ];
   if (lastDecision && lastDecision.profile === statusProfile) {
     widgetLines.push(
@@ -119,6 +108,7 @@ export const updateStatus = (
   if (Object.keys(pinnedTierByProfile).length > 1) {
     widgetLines.push(`Pins: ${formatPinSummary(pinnedTierByProfile)}`);
   }
+  widgetLines.push('')
 
   ctx.ui.setWidget(
     'router',

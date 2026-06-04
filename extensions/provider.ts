@@ -245,7 +245,7 @@ export const registerRouterProvider = (
 
               const shouldRunTheClassifier = shouldRunClassifier(currentConfig, context, lastDecision, lastMsgWasTool, toolResultsCount, state.debugEnabled, ctx);
               const classifierResult = shouldRunTheClassifier
-                ? await runClassifier(currentConfig, modelRegistry, context, lastDecision, heuristicAnalysis)
+                ? await runClassifier(currentConfig, modelRegistry, context, lastDecision, heuristicAnalysis, ctx)
                 : null;
 
               if (classifierResult) { // Use the result from the fresh classifier run
@@ -347,7 +347,7 @@ export const registerRouterProvider = (
                 }
 
                 if (ctx) {
-                  if (state.debugEnabled) ctx.ui.notify('Decision = ' + formatDecision(decision), 'info');
+                  if (state.debugEnabled) ctx.ui.notify('Decision ' + formatDecision(decision), 'info');
                   actions.updateStatus(ctx);
                 }
 
@@ -362,8 +362,8 @@ export const registerRouterProvider = (
                 }
 
                 // Try delegation
-                const MAX_RETRIES_PER_MODEL = 2;
-                for (let attempt = 1; attempt <= MAX_RETRIES_PER_MODEL; attempt++) {
+                const MAX_ATTEMPTS_PER_MODEL = 2;
+                for (let attempt = 1; attempt <= MAX_ATTEMPTS_PER_MODEL; attempt++) {
                   try {
                     const thinkingOverride = actions.getThinkingOverride(model.id, decision.tier);
                     const delegatedReasoning =
@@ -414,9 +414,9 @@ export const registerRouterProvider = (
                     break attemptLoop;
                   } catch (err) {
                     lastError = err;
-                    const remaining = MAX_RETRIES_PER_MODEL - attempt;
+                    const remaining = MAX_ATTEMPTS_PER_MODEL - attempt;
                     ctx?.ui.notify(
-                      `Failed to delegate to model ${modelRef} (attempt ${attempt}/${MAX_RETRIES_PER_MODEL}): ${err}${remaining > 0 ? ` — ${remaining} retr${remaining === 1 ? 'y' : 'ies'} left` : ''}`,
+                      `Failed to delegate to model ${modelRef} (attempt ${attempt}/${MAX_ATTEMPTS_PER_MODEL}): ${err}${remaining > 0 ? ` — ${remaining} retr${remaining === 1 ? 'y' : 'ies'} left` : ''}`,
                       'warning',
                     );
                   }
