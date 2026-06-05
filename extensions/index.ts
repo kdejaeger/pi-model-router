@@ -366,9 +366,9 @@ const routerExtension = (pi: ExtensionAPI) => {
     actions,
   );
 
-  pi.on('session_start', async (event, ctx) => {
-    isInitialized = true;
+  pi.on('session_start', async (_event, ctx) => {
     await restoreStateFromSession(ctx);
+    isInitialized = true;
 
     if (lastConfigWarnings.length > 0) {
       ctx.ui.notify(`Router config warnings:\n${lastConfigWarnings.join('\n')}`, 'warning');

@@ -1,7 +1,7 @@
 {
   "defaultProfile": "auto",
   "debug": false,
-  "classifierModel": "google/gemini-flash-lite-latest",
+  "classifierModels": ["google/gemini-flash-lite-latest", "openrouter/deepseek/deepseek-v4-flash"],
   "classifierModelThinking": "off",
   "classifierRunOnceAfterToolCount": 3,
   "classifierRunAfterToolFailures": 2,

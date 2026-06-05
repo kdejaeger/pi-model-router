@@ -26,7 +26,7 @@ export const extractTextFromContent = (content: string | Message['content']): st
     .join('\n');
 };
 
-export const getLastUserText = (context: Context): string => {
+const getLastUserText = (context: Context): string => {
   for (let i = context.messages.length - 1; i >= 0; i--) {
     const message = context.messages[i] as Message;
     if (message.role === 'user') {
@@ -41,7 +41,7 @@ export const getLastUserText = (context: Context): string => {
   return '';
 };
 
-export const getRecentConversationText = (context: Context, limit = 6): string => {
+const getRecentConversationText = (context: Context, limit = 6): string => {
   return context.messages
     .slice(-limit)
     .map((message) => {
@@ -100,11 +100,11 @@ const countConsecutiveRecentToolFailuresSinceLastUserPrompt = (context: Context)
   return count;
 };
 
-export const countWords = (text: string): number => {
+const countWords = (text: string): number => {
   return text.split(/\s+/).filter(Boolean).length;
 };
 
-export const containsAny = (text: string, keywords: string[]): boolean => {
+const containsAny = (text: string, keywords: string[]): boolean => {
   return keywords.some((keyword) => text.includes(keyword));
 };
 
@@ -319,48 +319,6 @@ export const makeHeuristicAnalysis = (
 };
 
 /**
- * Build enriched classifier prompt by including heuristic analysis as advisory context.
- */
-export const buildClassifierPrompt = (
-  context: Context,
-  previousDecision: RoutingDecision | undefined,
-  heuristicAnalysis?: HeuristicAnalysis,
-): string => {
-  const historyText = getRecentConversationText(context);
-  const promptText = getLastUserText(context);
-
-  let heuristicSection = '';
-  if (heuristicAnalysis) {
-    heuristicSection = `Heuristic analysis (advisory — you may override):
-  Heuristic suggested tier: ${heuristicAnalysis.suggestedTier}
-  Heuristic reasoning: ${heuristicAnalysis.reasoning}`;
-  }
-
-  const previousTierLine = previousDecision?.tier ? `Previous tier: ${previousDecision.tier}` : '';
-
-  return `You are a model router classifier. Your job is to categorize the user's latest request into one of three tiers: "high", "medium", or "low". 
-
-Tiers:
-- high: Extremely complex reasoning, architectural design, multi-step planning, tradeoff analysis, or resolving deep-rooted bugs. The high tier usually contains the most expensive models with highest thinking requirements and biggest context windows.
-- medium: Standard coding tasks, implementing well-defined features, multi-file edits, focused debugging, and writing tests within an established pattern. The medium tier usually contains balanced models with medium to high thinking requirements.
-- low: Routine tasks requiring no or minimal reasoning, such as summaries, renaming, changelogs, formatting, quick explanations, lookups, or other small bounded text transforms. The low tier usually contains cheaper models with no to low thinking requirements.
-
-${previousTierLine}
-
-${heuristicSection}
-
-Recent history & tool results (The Context):
-${historyText}
-
-Latest user message (The Intent):
-${promptText}
-
-Return your decision in exactly two lines:
-Tier: [high|medium|low]
-Reasoning: [one concise sentence summarizing the request's complexity and why it fits the tier]`;
-};
-
-/**
  * Determine if the classifier should be run based on the current context and configuration.
  */
 export const shouldRunClassifier = (
@@ -400,6 +358,48 @@ export const shouldRunClassifier = (
   return triggers.length > 0;
 };
 
+/**
+ * Build enriched classifier prompt by including heuristic analysis as advisory context.
+ */
+const buildClassifierPrompt = (
+  context: Context,
+  previousDecision: RoutingDecision | undefined,
+  heuristicAnalysis?: HeuristicAnalysis,
+): string => {
+  const historyText = getRecentConversationText(context);
+  const promptText = getLastUserText(context);
+
+  let heuristicSection = '';
+  if (heuristicAnalysis) {
+    heuristicSection = `Heuristic analysis (advisory — you may override):
+  Heuristic suggested tier: ${heuristicAnalysis.suggestedTier}
+  Heuristic reasoning: ${heuristicAnalysis.reasoning}`;
+  }
+
+  const previousTierLine = previousDecision?.tier ? `Previous tier: ${previousDecision.tier}` : '';
+
+  return `You are a model router classifier. Your job is to categorize the user's latest request into one of three tiers: "high", "medium", or "low". 
+
+Tiers:
+- high: Extremely complex reasoning, architectural design, multi-step planning, tradeoff analysis, or resolving deep-rooted bugs. The high tier usually contains the most expensive models with highest thinking requirements and biggest context windows.
+- medium: Standard coding tasks, implementing well-defined features, multi-file edits, focused debugging, and writing tests within an established pattern. The medium tier usually contains balanced models with medium to high thinking requirements.
+- low: Routine tasks requiring no or minimal reasoning, such as summaries, renaming, changelogs, formatting, quick explanations, lookups, or other small bounded text transforms. The low tier usually contains cheaper models with no to low thinking requirements.
+
+${previousTierLine}
+
+${heuristicSection}
+
+Recent history & tool results (The Context):
+${historyText}
+
+Latest user message (The Intent):
+${promptText}
+
+Return your decision in exactly two lines:
+Tier: [high|medium|low]
+Reasoning: [one concise sentence summarizing the request's complexity and why it fits the tier]`;
+};
+
 export const runClassifier = async (
   currentConfig: RouterConfig,
   modelRegistry: ExtensionContext['modelRegistry'],
@@ -407,18 +407,30 @@ export const runClassifier = async (
   previousDecision: RoutingDecision | undefined,
   heuristicAnalysis?: HeuristicAnalysis,
   extCtx?: ExtensionContext,
+  debugEnabled = false,
 ): Promise<{ tier: RouterTier; reasoning: string } | undefined> => {
-  try {
-    if (!currentConfig.classifierModel) return undefined;
-    const model = resolveModelFromRef(currentConfig.classifierModel, modelRegistry);
-    if (!model) return undefined;
+  const classifierModels = currentConfig.classifierModels ?? [];
+  if (classifierModels.length === 0) return undefined;
 
-    const thinking = currentConfig.classifierModelThinking;
+  const thinking = currentConfig.classifierModelThinking;
+  const classifierPrompt = buildClassifierPrompt(context, previousDecision, heuristicAnalysis);
+  const classifierContext: Context = { messages: [{ role: 'user', content: classifierPrompt, timestamp: Date.now() }] };
+
+  for (const classifierModelRef of classifierModels) {
+    const model = resolveModelFromRef(classifierModelRef, modelRegistry);
+    if (!model) {
+      extCtx?.ui.notify(`[router] Classifier model "${classifierModelRef}" not found in registry, skipping.`, 'warning');
+      continue;
+    }
+
     const auth = await modelRegistry.getApiKeyAndHeaders(model);
-    if (!auth.ok || !auth.apiKey) return undefined;
-
-    const classifierPrompt = buildClassifierPrompt(context, previousDecision, heuristicAnalysis);
-    const classifierContext: Context = { messages: [{ role: 'user', content: classifierPrompt, timestamp: Date.now() }] };
+    if (!auth.ok || !auth.apiKey) {
+      const reason = auth.ok
+        ? `No API key for model: ${classifierModelRef}`
+        : `Auth failed for model: ${classifierModelRef}: ${auth.error}`;
+      extCtx?.ui.notify(`[router] ${reason}`, 'warning');
+      continue;
+    }
 
     const MAX_CLASSIFIER_ATTEMPTS = 3;
     for (let attempt = 1; attempt <= MAX_CLASSIFIER_ATTEMPTS; attempt++) {
@@ -446,19 +458,18 @@ export const runClassifier = async (
         }
       } catch (err) {
         const errMsg = (err as Error)?.message ?? String(err);
-        if (errMsg) {
-          extCtx?.ui.notify(`[router] Classifier error (attempt ${attempt}/${MAX_CLASSIFIER_ATTEMPTS}): ${errMsg}`, 'warning');
+        if (errMsg && debugEnabled) {
+          extCtx?.ui.notify(`[router] Classifier error on "${classifierModelRef}" (attempt ${attempt}/${MAX_CLASSIFIER_ATTEMPTS}): ${errMsg}`, 'warning');
         }
         if (attempt < MAX_CLASSIFIER_ATTEMPTS) {
-          const detectedStatus = /^\d+|got status: \d+|Too Many Requests|rate.?limit/i.test(errMsg) ? 429 : undefined;
+          const detectedStatus = /429|Too Many Requests|rate.?limit/i.test(errMsg) ? 429 : undefined;
           const waitMs = detectedStatus === 429 ? attempt * 3000 : 1000;
-          extCtx?.ui.notify(`[router] Retrying in ${waitMs}ms...`, 'warning');
+          if (debugEnabled) extCtx?.ui.notify(`[router] Retrying classifier "${classifierModelRef}" in ${waitMs}ms...`, 'warning');
           await new Promise((resolve) => setTimeout(resolve, waitMs));
         }
       }
     }
-  } catch (error) {
-    // Ignore classifier errors and fall back to heuristics
   }
+
   return undefined;
 };

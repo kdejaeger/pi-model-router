@@ -35,18 +35,27 @@ export const FALLBACK_CONFIG: RouterConfig = {
 export const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 export const ROUTER_PIN_VALUES = ['auto', 'high', 'medium', 'low'] as const;
 
-export const isObjectRecord = (
+const isObjectRecord = (
   value: unknown,
 ): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
 
-export const isThinkingLevel = (value: unknown): value is ThinkingLevel =>
+const isThinkingLevel = (value: unknown): value is ThinkingLevel =>
   typeof value === 'string' && THINKING_LEVELS.includes(value as ThinkingLevel);
 
-export const isRouterTier = (value: unknown): value is RouterTier =>
+const isRouterTier = (value: unknown): value is RouterTier =>
   value === 'high' || value === 'medium' || value === 'low';
 
-export const parseConfigFile = (path: string): ParsedConfigFile => {
+const validateNonNegativeInt = (val: unknown, label: string, fallback: number | undefined, warnings: string[]): number | undefined => {
+  if (val === undefined || val === null) return fallback;
+  if (typeof val !== 'number' || !Number.isInteger(val) || val < 0) {
+    warnings.push(`Invalid ${label} (${JSON.stringify(val)}). Must be a non-negative integer.`);
+    return fallback;
+  }
+  return val;
+};
+
+const parseConfigFile = (path: string): ParsedConfigFile => {
   if (!existsSync(path)) {
     return { config: {}, warnings: [] };
   }
@@ -70,7 +79,7 @@ export const parseConfigFile = (path: string): ParsedConfigFile => {
   }
 };
 
-export const mergeConfig = (
+const mergeConfig = (
   base: RouterConfig,
   override: Partial<RouterConfig>,
 ): RouterConfig => {
@@ -96,7 +105,7 @@ export const mergeConfig = (
   return {
     defaultProfile: override.defaultProfile ?? base.defaultProfile,
     debug: override.debug ?? base.debug,
-    classifierModel: override.classifierModel ?? base.classifierModel,
+    classifierModels: override.classifierModels ?? base.classifierModels,
     classifierModelThinking:
       override.classifierModelThinking ?? base.classifierModelThinking,
     classifierRunOnceAfterToolCount:
@@ -151,7 +160,7 @@ export const resolveModelFromRef = (
   }
 };
 
-export const normalizeTierConfig = (
+const normalizeTierConfig = (
   value: unknown,
   fallback: RoutedTierConfig,
   profileName: string,
@@ -192,14 +201,16 @@ export const normalizeTierConfig = (
   let fallbacks: string[] | undefined = undefined;
   if (Array.isArray(value.fallbacks)) {
     fallbacks = [];
-    for (const f of value.fallbacks) {
-      if (typeof f === 'string') {
+    for (const rawFB of value.fallbacks) {
+      if (typeof rawFB === 'string') {
+        const trimmedFB = rawFB.trim();
+        if (!trimmedFB) continue;
         try {
-          parseCanonicalModelRef(f);
-          fallbacks.push(f);
+          parseCanonicalModelRef(trimmedFB);
+          fallbacks.push(trimmedFB);
         } catch (error) {
           warnings.push(
-            `Invalid fallback model "${f}" in profile "${profileName}" ${tier} tier: ${error instanceof Error ? error.message : String(error)}`,
+            `Invalid fallback model "${rawFB}" in profile "${profileName}" ${tier} tier: ${error instanceof Error ? error.message : String(error)}`,
           );
         }
       }
@@ -277,7 +288,17 @@ export const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
       : FALLBACK_CONFIG.defaultContextThresholdPercent;
 
   const contextThresholdPercentOverrides = isObjectRecord(raw.contextThresholdPercentOverrides)
-    ? (raw.contextThresholdPercentOverrides as Record<string, number>)
+    ? Object.fromEntries(
+        Object.entries(raw.contextThresholdPercentOverrides!).flatMap(([key, val]) => {
+          const trimmed = key.trim();
+          if (!trimmed) return [];
+          if (typeof val !== 'number' || val <= 0) {
+            warnings.push(`Ignored contextThresholdPercentOverride "${key}" (${JSON.stringify(val)}): expected a positive number.`);
+            return [];
+          }
+          return [[trimmed, val] as [string, number]];
+        }),
+      )
     : undefined;
 
   const rules: RoutingRule[] = [];
@@ -304,18 +325,25 @@ export const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
     }
   }
 
-  let classifierModel =
-    typeof raw.classifierModel === 'string'
-      ? raw.classifierModel.trim()
-      : undefined;
-  if (classifierModel) {
-    try {
-      parseCanonicalModelRef(classifierModel);
-    } catch (error) {
-      warnings.push(
-        `Invalid classifierModel: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      classifierModel = undefined;
+  let classifierModels: string[] | undefined = undefined;
+  if (Array.isArray(raw.classifierModels)) {
+    classifierModels = [];
+    for (const rawCM of raw.classifierModels) {
+      if (typeof rawCM === 'string') {
+        const trimmedCM = rawCM.trim();
+        if (!trimmedCM) continue;
+        try {
+          parseCanonicalModelRef(trimmedCM);
+          classifierModels.push(trimmedCM);
+        } catch (error) {
+          warnings.push(
+            `Invalid classifierModels entry "${rawCM}": ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+    }
+    if (classifierModels.length === 0) {
+      classifierModels = undefined;
     }
   }
 
@@ -324,15 +352,19 @@ export const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
     warnings.push(`Invalid classifierModelThinking value "${raw.classifierModelThinking}". Falling back to "${FALLBACK_CONFIG.classifierModelThinking}".`);
   }
 
+  const classifierRunOnceAfterToolCount = validateNonNegativeInt(raw.classifierRunOnceAfterToolCount, 'classifierRunOnceAfterToolCount', FALLBACK_CONFIG.classifierRunOnceAfterToolCount, warnings);
+  const classifierRunAfterToolFailures = validateNonNegativeInt(raw.classifierRunAfterToolFailures, 'classifierRunAfterToolFailures', FALLBACK_CONFIG.classifierRunAfterToolFailures, warnings);
+  const classifierInterval = validateNonNegativeInt(raw.classifierInterval, 'classifierInterval', FALLBACK_CONFIG.classifierInterval, warnings);
+
   return {
     config: {
       defaultProfile,
       debug: typeof raw.debug === 'boolean' ? raw.debug : false,
-      classifierModel,
+      classifierModels,
       classifierModelThinking,
-      classifierRunOnceAfterToolCount: raw.classifierRunOnceAfterToolCount,
-      classifierRunAfterToolFailures: raw.classifierRunAfterToolFailures,
-      classifierInterval: raw.classifierInterval,
+      classifierRunOnceAfterToolCount,
+      classifierRunAfterToolFailures,
+      classifierInterval,
       tierStickiness,
       defaultContextThresholdPercent,
       contextThresholdPercentOverrides,

@@ -146,20 +146,20 @@ There are two unrelated uses of `"auto"` in this project: (1) as a **profile nam
 
 ### Configuration Fields
 
-| Field | Type | Default      | Description                                                                                                                                                                                                                                                                       |
-|---|---|--------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `debug` | `boolean` | `false`      | Enable debug mode. Equivalent to running `/router debug on` at startup.                                                                                                                                                                                                           |
-| `defaultProfile` | `string` | `"auto"`     | The profile to activate by default when the router starts. Must match a key in `profiles`. See [Activating the Router](#activating-the-router) for how to make the router active on session start.                                                                                |
-| `classifierModel` | `string` | --           | A fast model ref (e.g. `google/gemini-flash-latest`) used to classify user intent via LLM. When set, the classifier has final say on tier selection (gated by triggers below). Omit to use fast local heuristics only. |
-| `classifierModelThinking` | `ThinkingLevel` | `off` | Reasoning/thinking level for the classifier model calls. Defaults to `off` (no extended reasoning) to keep calls fast and cheap. |
-| `classifierRunOnceAfterToolCount` | `number` | `3` | Run the classifier once after this many tool continuations. Default: 3. Set to 0 to disable. |
-| `classifierRunAfterToolFailures` | `number` | `2` | Run the classifier after this many consecutive tool failures (counting from the tail). Default: 2. |
-| `classifierInterval` | `number` | `10` | Run the classifier every N tool continuations as a periodic re-check. Default: 10. Set to 0 to disable. |
-| `tierStickiness` | `number` (0.0-1.0) | `0.5`        | Stickiness of the current routing phase. Higher values keep the router in the same tier longer during multi-turn conversations.                                                                                                                                                   |
-| `defaultContextThresholdPercent` | `number` | `90`         | Default percentage threshold of a model's context window. If session context usage exceeds this percentage, the router searches for a suitable model in the current or higher tiers. |
+| Field | Type | Default      | Description                                                                                                                                                                                                                                                                                                                                                                                         |
+|---|---|--------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `debug` | `boolean` | `false`      | Enable debug mode. Equivalent to running `/router debug on` at startup.                                                                                                                                                                                                                                                                                                                             |
+| `defaultProfile` | `string` | `"auto"`     | The profile to activate by default when the router starts. Must match a key in `profiles`. See [Activating the Router](#activating-the-router) for how to make the router active on session start.                                                                                                                                                                                                  |
+| `classifierModels` | `string[]` | --           | Array of fast model refs (e.g. `["google/gemini-flash-latest"]`) used to classify user intent via LLM. Models are tried in order, providing fallback if one hits an error. When set, the classifier has final say on tier selection (gated by triggers below). Omit to use fast local heuristics only.                                                                                              |
+| `classifierModelThinking` | `ThinkingLevel` | `off` | Reasoning/thinking level for the classifier model calls. Defaults to `off` (no extended reasoning) to keep calls fast and cheap.                                                                                                                                                                                                                                                                    |
+| `classifierRunOnceAfterToolCount` | `number` | `3` | Run the classifier once after this many tool continuations. Default: 3. Set to 0 to disable.                                                                                                                                                                                                                                                                                                        |
+| `classifierRunAfterToolFailures` | `number` | `2` | Run the classifier after this many consecutive tool failures (counting from the tail). Default: 2.                                                                                                                                                                                                                                                                                                  |
+| `classifierInterval` | `number` | `10` | Run the classifier every N tool continuations as a periodic re-check. Default: 10. Set to 0 to disable.                                                                                                                                                                                                                                                                                             |
+| `tierStickiness` | `number` (0.0-1.0) | `0.5`        | Stickiness of the current routing phase. Higher values keep the router in the same tier longer during multi-turn conversations.                                                                                                                                                                                                                                                                     |
+| `defaultContextThresholdPercent` | `number` | `90`         | Default percentage threshold of a model's context window. If session context usage exceeds this percentage, the router searches for a suitable model in the current or higher tiers.                                                                                                                                                                                                                |
 | `contextThresholdPercentOverrides` | `Record<string, number>` | -- | **Optional.** Per-model context threshold overrides. Keys are canonical model refs in `"provider/model"` format. Values are the percentage of that model's context window that triggers an upgrade search. These take precedence over `defaultContextThresholdPercent`. Keys that do not match known models cause a startup error. See [Context Threshold Overrides](#context-threshold-overrides). |
-| `rules` | `array` | --           | **Optional.** List of keyword-based routing rules (see [Custom Rules](#custom-rules)).                                                                                                                                                                                            |
-| `profiles` | `object` | _(required)_ | Map of profile definitions.                                                                                                                                                                                                                                                       |
+| `rules` | `array` | --           | **Optional.** List of keyword-based routing rules (see [Custom Rules](#custom-rules)).                                                                                                                                                                                                                                                                                                              |
+| `profiles` | `object` | _(required)_ | Map of profile definitions.                                                                                                                                                                                                                                                                                                                                                                         |
 
 ### Profile Definitions
 
@@ -360,7 +360,7 @@ PIPELINE (always runs)
   ├─ Heuristic tier → advisory HeuristicAnalysis
   └─ heuristicAnalysis is now ready
 
-GATE 1: CLASSIFIER GATING (only when classifierModel is configured)
+GATE 1: CLASSIFIER GATING (only when classifierModels is configured)
   - No pin, no context trigger, no Google continuation → evaluate gates
   - New user message? → run classifier (gates bypassed)
   - Tool-result continuation?
@@ -403,7 +403,7 @@ Without an LLM classifier, the router uses these signals locally:
 
 ### Classifier Gating
 
-When the router has an LLM classifier configured (`classifierModel`), it doesn't run on every turn. Instead, the classifier is gated by smart triggers that avoid waste while catching real tier mismatches. **The classifier has final say on tier** (post-route corrections like image escalation) — heuristic analysis serves as advisory input to the LLM classifier prompt.
+When the router has an LLM classifier configured (`classifierModels`), it doesn't run on every turn. Instead, the classifier is gated by smart triggers that avoid waste while catching real tier mismatches. **The classifier has final say on tier** (post-route corrections like image escalation) — heuristic analysis serves as advisory input to the LLM classifier prompt.
 
 | Gate | Trigger                                                                                     | Reason |
 |---|---------------------------------------------------------------------------------------------|---|
@@ -503,7 +503,7 @@ Route: medium -> google/gemini-flash-latest
 ```json
 {
   "defaultProfile": "balanced",
-  "classifierModel": "google/gemini-flash-latest",
+  "classifierModels": ["google/gemini-flash-latest"],
   "tierStickiness": 0.5,
   "defaultContextThresholdPercent": 70,
   "rules": [

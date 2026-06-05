@@ -1,7 +1,6 @@
 import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
 
 export type RouterTier = 'high' | 'medium' | 'low';
-export type RouterPin = RouterTier | 'auto';
 export type RouterPinByProfile = Partial<Record<string, RouterTier>>;
 export type RouterThinkingByTier = Partial<Record<RouterTier, ThinkingLevel>>;
 export type RouterThinkingByProfile = Record<string, RouterThinkingByTier>;
@@ -27,7 +26,7 @@ export interface RouterProfile {
 export interface RouterConfig {
   defaultProfile?: string;
   debug?: boolean;
-  classifierModel?: string;
+  classifierModels?: string[];
   classifierModelThinking?: ThinkingLevel;
   classifierRunOnceAfterToolCount?: number; // Run the classifier once after this many tool continuations. Default: 3.
   classifierRunAfterToolFailures?: number; // Run the classifier after this many consecutive tool failures in a single turn. Default: 2.

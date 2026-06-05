@@ -15,7 +15,7 @@ import { parseCanonicalModelRef, profileNames, resolveModelFromRef, ROUTER_TIERS
 import { buildRoutingDecision, countToolResultsSinceLastUserPrompt, extractTextFromContent, makeHeuristicAnalysis, runClassifier, shouldRunClassifier } from './routing';
 import { formatDecision } from './ui';
 
-export const createErrorMessage = (model: Model<Api>, message: string): AssistantMessage => {
+const createErrorMessage = (model: Model<Api>, message: string): AssistantMessage => {
   return {
     role: 'assistant',
     content: [],
@@ -240,12 +240,12 @@ export const registerRouterProvider = (
             let resolvedReasoning: string = `Heuristic: ${heuristicAnalysis.reasoning}`;
             let lastClassifierRunToolCount = lastDecision?.lastClassifierRunToolCount;
 
-            if (currentConfig.classifierModel && !pinnedTier) {
+            if (currentConfig.classifierModels?.length && !pinnedTier) {
               const toolResultsCount = countToolResultsSinceLastUserPrompt(context);
 
               const shouldRunTheClassifier = shouldRunClassifier(currentConfig, context, lastDecision, lastMsgWasTool, toolResultsCount, state.debugEnabled, ctx);
               const classifierResult = shouldRunTheClassifier
-                ? await runClassifier(currentConfig, modelRegistry, context, lastDecision, heuristicAnalysis, ctx)
+                ? await runClassifier(currentConfig, modelRegistry, context, lastDecision, heuristicAnalysis, ctx, state.debugEnabled)
                 : null;
 
               if (classifierResult) { // Use the result from the fresh classifier run
@@ -272,7 +272,7 @@ export const registerRouterProvider = (
             const contextUsage = await ctx?.getContextUsage();
             tokensUsed = contextUsage?.tokens ?? 0;
           } catch {
-            ctx?.ui.notify('Unable to get context usage (and determine tokens used) from pi','warning');
+            ctx?.ui.notify('Unable to get context usage (and determine tokens used) from pi', 'warning');
           }
 
           const detectedImageInRecentContext = imageDetectedInRecentContext(context);

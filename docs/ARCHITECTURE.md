@@ -32,7 +32,7 @@ session_start / model_select / turn_end (index.ts)
             │      tool count, tier-stickiness thresholds, rules,
             │      manual pin, context trigger → HeuristicAnalysis)
             │
-            ├─→ Classifier gating (only when classifierModel configured):
+            ├─→ Classifier gating (only when classifierModels configured):
             │     ├─ New user message? → run classifier (final say)
             │     ├─ Tool cont ≥ confInitN (first crossing)? → run once
             │     ├─ Consecutive failures ≥ confFailN? → run (crisis)
