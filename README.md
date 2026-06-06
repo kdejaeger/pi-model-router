@@ -392,12 +392,12 @@ Without an LLM classifier, the router uses these signals locally:
 |---|---|
 | Word count > 40-120 (biased) | `high` |
 | Word count <= 4-12 (biased) | `low` |
-| Planning keywords (`plan`, `architecture`, `analyze`, `tradeoff`, `research`, `design`, `strategy`, `compare`, `approach`, `migration`) | `high` |
-| Summary keywords (`summarize`, `changelog`, `rewrite`, `reformat`, `recap`, `tl;dr`, `explain briefly`) | `low` |
-| Implementation keywords (`implement`, `code`, `fix`, `edit`, `write`, `refactor`, `patch`, `apply`, `continue`, `add tests`) | `medium` |
-| Explicit high hints (`best`, `deep`, `carefully`, `thoroughly`, `robust`, `comprehensive`, `step by step`, `think hard`, `highest quality`) | `high` |
-| Explicit low hints (`fast`, `cheap`, `quick`, `brief`, `one sentence`, `tiny`, `small`) | `low` |
-| Lookup keywords (`where is`, `show me`, `list`, `find`, `grep`) + short prompt + no tools this turn | `low` |
+| Planning keywords (`plan`, `planning`, `architecture`, `architect`, `analyze`, `analysis`, `tradeoff`, `trade-off`, `research`, `investigate`, `root cause`, `design`, `strategy`, `compare`, `approach`, `migration`, `options`) | `high` |
+| Summary keywords (`summarize`, `summary`, `changelog`, `rewrite`, `reformat`, `format`, `rename`, `recap`, `tl;dr`, `explain briefly`) | `low` |
+| Implementation keywords (`implement`, `code`, `fix`, `update`, `edit`, `write`, `refactor`, `patch`, `change`, `apply`, `continue`, `resume`, `add tests`, `make the changes`, `go ahead`) | `medium` |
+| Explicit high hints (`best`, `deep`, `deeply`, `carefully`, `thoroughly`, `robust`, `comprehensive`, `step by step`, `think hard`, `highest quality`) | `high` |
+| Explicit low hints (`fast`, `cheap`, `quick`, `quickly`, `brief`, `briefly`, `one sentence`, `one line`, `tiny`, `small`) | `low` |
+| Lookup keywords (`where is`, `which file`, `show me`, `list`, `what files`, `find`, `grep`) + short prompt + no tools this turn | `low` |
 | Multi-line prompts (>=4 lines) | `high` |
 | `why` prefix question | `high` |
 
@@ -456,9 +456,7 @@ When using Google models with thinking enabled, tool-result continuations requir
 
 ### Auto-Context Truncation
 
-The router reports the **largest context window across all models in a profile** (using the `high` tier model's capacity). When routing to a model with a smaller window, the router trims oldest messages (preserving the system prompt and the most recent message) to fit within the target model's limit.
-
-> **Limitation:** This assumes the `high` tier model always has the largest context window in the profile. If a lower tier has a larger window, the router won't use it -- it truncates to the `high` tier's capacity instead.
+The router reports the **largest context window across all models in a profile** (scanning all tiers and their fallbacks for the maximum). When routing to a model with a smaller window, the router trims oldest messages (preserving the system prompt and the most recent message) to fit within the target model's limit.
 
 Estimated using a conservative heuristic: **4 characters = 1 token**.
 
@@ -489,9 +487,9 @@ Route: medium -> google/gemini-flash-latest
 
 **Debug History:** With `/router debug on`, every routing decision is logged with timestamps. View with `/router debug show`:
 ```
-[10:32:15 AM] balanced: high -> openai/gpt-5.4-pro (Detected planning from keywords.)
-[10:33:42 AM] balanced: medium -> google/gemini-flash-latest (Detected implementation work.)
-[10:34:10 AM] balanced: low -> openai/gpt-5.4-nano (Detected a short read-only lookup request.)
+[10:32:15 AM] high -> openai/gpt-5.4-pro (high) - Detected planning from keywords.
+[10:33:42 AM] medium -> google/gemini-flash-latest (medium) - Detected implementation work.
+[10:34:10 AM] low -> openai/gpt-5.4-nano (low) - Detected a short read-only lookup request.
 ```
 
 ---
