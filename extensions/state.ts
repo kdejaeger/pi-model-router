@@ -24,18 +24,16 @@ export const buildPersistedState = (
   pinnedTierByProfile: RouterPinByProfile,
   debugEnabled: boolean,
   debugHistory: RoutingDecision[],
-  lastDecision: RoutingDecision | undefined,
-  lastNonRouterModel: string | undefined,
-): RouterPersistedState => {
-  return {
-    enabled: routerEnabled,
-    selectedProfile: selectedProfile ?? '',
-    pinTier: selectedProfile ? pinnedTierByProfile[selectedProfile] : undefined,
-    pinByProfile: { ...pinnedTierByProfile },
-    debugEnabled,
-    debugHistory,
-    lastDecision,
-    lastNonRouterModel,
-    timestamp: Date.now(),
-  };
-};
+  lastDecision?: RoutingDecision,
+  lastNonRouterModel?: string,
+): RouterPersistedState => ({
+  enabled: routerEnabled,
+  selectedProfile: selectedProfile ?? '',
+  pinTier: selectedProfile ? pinnedTierByProfile[selectedProfile] : undefined,
+  pinByProfile: { ...pinnedTierByProfile },
+  debugEnabled,
+  debugHistory,
+  lastDecision,
+  lastNonRouterModel,
+  timestamp: Date.now(),
+});

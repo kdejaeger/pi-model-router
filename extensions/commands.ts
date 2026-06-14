@@ -158,14 +158,16 @@ export const registerCommands = (
   const handlePin = async (args: string[], ctx: ExtensionContext) => {
     const currentProfile = getActiveProfileOrWarn(ctx);
     if (!currentProfile) return;
+
+    const pinUsage = 'Usage: /router pin [profile] <high|medium|low|clear>';
+
     if (args.length === 0) {
       ctx.ui.notify(
         [
           `Profile: ${currentProfile}`,
           `Pinned tier: ${state.pinnedTierByProfile[currentProfile] ?? 'none'}`,
           `Pins by profile: ${formatPinSummary(state.pinnedTierByProfile)}`,
-          `Usage: /router pin <high|medium|low|clear>`,
-          `   or: /router pin <profile> <high|medium|low|clear>`,
+          pinUsage,
         ].join('\n'),
         'info',
       );
@@ -174,30 +176,24 @@ export const registerCommands = (
     }
 
     if (args.length > 2) {
-      ctx.ui.notify(
-        'Usage: /router pin [profile] <high|medium|low|clear>',
-        'error',
-      );
+      ctx.ui.notify(pinUsage, 'error');
       return;
     }
 
-    let profileName = currentProfile;
-    let pinValue = '';
+    let profileName: string;
+    let pinValue: string;
 
     if (args.length === 1) {
-      pinValue = args[0];
-    } else {
-      profileName = args[0];
-      pinValue = args[1];
-    }
-
-    if (!state.currentConfig.profiles[profileName]) {
-      if (args.length === 2 || !isPinValue(args[0])) {
-        ctx.ui.notify(`Unknown router profile: ${profileName}`, 'error');
-        return;
-      }
+      // pin <value>
       profileName = currentProfile;
       pinValue = args[0];
+    } else if (args[0] in state.currentConfig.profiles) {
+      // pin <profile> <value>
+      [profileName, pinValue] = args;
+    } else {
+      // pin <unknown> <value> — the first arg isn't a valid profile
+      ctx.ui.notify(`Unknown router profile: ${args[0]}`, 'error');
+      return;
     }
 
     if (!isPinValue(pinValue)) {

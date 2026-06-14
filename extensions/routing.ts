@@ -189,7 +189,7 @@ export const buildRoutingDecision = (
     targetModelId: modelId,
     targetLabel: routedTierConf.model,
     reasoning,
-    thinking: routedTierConf.thinking!,
+    thinking: routedTierConf.thinking ?? 'medium',
     timestamp: Date.now(),
     lastClassifierRunToolCount,
   };
@@ -214,6 +214,91 @@ export const decisionsMatch = (a: RoutingDecision | undefined, b: RoutingDecisio
  * for the LLM classifier (the classifier has final say). When no classifier is
  * configured, the heuristic analysis directly becomes the routing decision.
  */
+const analyzeKeywords = (prompt: string) => ({
+  explicitHigh: containsAny(prompt, EXPLICIT_HIGH_HINTS),
+  explicitLow: containsAny(prompt, EXPLICIT_LOW_HINTS),
+  planning: containsAny(prompt, PLANNING_KEYWORDS),
+  implementation: containsAny(prompt, IMPLEMENTATION_KEYWORDS),
+  summary: containsAny(prompt, SUMMARY_KEYWORDS),
+  lookup: containsAny(prompt, LOOKUP_KEYWORDS),
+});
+
+const matchCustomRule = (
+  prompt: string,
+  rules: RoutingRule[] | undefined,
+): { tier: RouterTier; reasoning: string; matched: boolean } => {
+  if (!rules) return { tier: 'medium', reasoning: '', matched: false };
+  for (const rule of rules) {
+    const matches = Array.isArray(rule.matches) ? rule.matches : [rule.matches];
+    if (containsAny(prompt, matches)) {
+      return {
+        tier: rule.tier,
+        reasoning: rule.reason ?? `Matched custom routing rule for: ${matches.join(', ')}`,
+        matched: true,
+      };
+    }
+  }
+  return { tier: 'medium', reasoning: '', matched: false };
+};
+
+const analyzeHeuristicTier = (
+  context: Context,
+  previousDecision: RoutingDecision | undefined,
+  tierStickiness: number,
+): { tier: RouterTier; reasoning: string } => {
+  const prompt = getLastUserText(context).toLowerCase();
+  const highThreshold = Math.max(40, 120 - (previousDecision?.tier === 'high' ? tierStickiness * 80 : 0));
+  const lowThreshold = Math.max(
+    4,
+    12 - (previousDecision?.tier === 'medium' || previousDecision?.tier === 'high' ? tierStickiness * 8 : 0),
+  );
+
+  const hints = analyzeKeywords(prompt);
+  if (hints.explicitHigh) {
+    return { tier: 'high', reasoning: 'Detected an explicit request for deeper or higher-quality reasoning.' };
+  }
+  if (hints.explicitLow) {
+    return { tier: 'low', reasoning: 'Detected an explicit request for a faster or lighter response.' };
+  }
+  if (hints.summary) {
+    return { tier: 'low', reasoning: 'Detected summary or lightweight transformation keywords.' };
+  }
+
+  const recentConversation = getRecentConversationText(context);
+  const toolResultCount = countToolResultsSinceLastUserPrompt(context);
+  const wordCount = countWords(prompt);
+  const multiLinePrompt = prompt.split('\n').length >= 4;
+
+  if (hints.planning || prompt.startsWith('why ') || wordCount >= highThreshold || multiLinePrompt) {
+    return {
+      tier: 'high',
+      reasoning:
+        previousDecision?.tier === 'high'
+          ? 'Continued high tier based on complexity or keywords.'
+          : 'Detected planning, broad analysis, or a high-complexity request.',
+    };
+  }
+  if (hints.implementation) {
+    return { tier: 'medium', reasoning: 'Detected implementation-oriented work with bounded execution scope.' };
+  }
+  if (hints.lookup && wordCount <= 24 && toolResultCount === 0) {
+    return { tier: 'low', reasoning: 'Detected a short read-only lookup request.' };
+  }
+  if (previousDecision?.tier === 'high' && toolResultCount === 0 && wordCount > lowThreshold) {
+    return { tier: 'high', reasoning: 'Kept the high tier bias because the conversation still looks exploratory.' };
+  }
+  if (previousDecision?.tier === 'medium' || recentConversation.includes('plan:')) {
+    const reasons: string[] = [];
+    if (previousDecision?.tier === 'medium') reasons.push('continuation of medium tier');
+    if (recentConversation.includes('plan:')) reasons.push('active plan detected in context');
+    return { tier: 'medium', reasoning: `Biasing to medium tier: ${reasons.join(', ')}.` };
+  }
+  if (wordCount <= lowThreshold) {
+    return { tier: 'low', reasoning: 'Detected a short bounded request.' };
+  }
+  return { tier: 'medium', reasoning: 'Defaulted to medium tier for general coding work.' };
+};
+
 export const makeHeuristicAnalysis = (
   context: Context,
   previousDecision: RoutingDecision | undefined,
@@ -221,97 +306,18 @@ export const makeHeuristicAnalysis = (
   tierStickiness = 0.5,
   rules?: RoutingRule[],
 ): HeuristicAnalysis => {
-  const prompt = getLastUserText(context).toLowerCase();
-
-  let tier: RouterTier = 'medium';
-  let reasoning = 'Defaulted to medium tier for general coding work.';
-  let isRuleMatched = false;
-
   if (pinnedTier) {
-    tier = pinnedTier;
-    reasoning = `Pinned to ${pinnedTier} tier via /router-pin.`;
-  } else {
-    // Check custom rules first
-    if (rules) {
-      for (const rule of rules) {
-        const matches = Array.isArray(rule.matches) ? rule.matches : [rule.matches];
-        if (containsAny(prompt, matches)) {
-          tier = rule.tier;
-          reasoning = rule.reason ?? `Matched custom routing rule for: ${matches.join(', ')}`;
-          isRuleMatched = true;
-          break;
-        }
-      }
-    }
-
-    if (!isRuleMatched) {
-      // Sticky bias: lower thresholds when continuing in the same tier
-      const highThreshold = Math.max(40, 120 - (previousDecision?.tier === 'high' ? tierStickiness * 80 : 0));
-      const lowThreshold = Math.max(
-        4,
-        12 - (previousDecision?.tier === 'medium' || previousDecision?.tier === 'high' ? tierStickiness * 8 : 0),
-      );
-
-      const keywordHints = {
-        explicitHigh: containsAny(prompt, EXPLICIT_HIGH_HINTS),
-        explicitLow: containsAny(prompt, EXPLICIT_LOW_HINTS),
-        planning: containsAny(prompt, PLANNING_KEYWORDS),
-        implementation: containsAny(prompt, IMPLEMENTATION_KEYWORDS),
-        summary: containsAny(prompt, SUMMARY_KEYWORDS),
-        lookup: containsAny(prompt, LOOKUP_KEYWORDS),
-      };
-
-      const recentConversation = getRecentConversationText(context);
-      const toolResultCountSinceLastUserPrompt = countToolResultsSinceLastUserPrompt(context);
-      const wordCount = countWords(prompt);
-      const multiLinePrompt = prompt.split('\n').length >= 4;
-
-      if (keywordHints.explicitHigh) {
-        tier = 'high';
-        reasoning = 'Detected an explicit request for deeper or higher-quality reasoning.';
-      } else if (keywordHints.explicitLow) {
-        tier = 'low';
-        reasoning = 'Detected an explicit request for a faster or lighter response.';
-      } else if (keywordHints.summary) {
-        tier = 'low';
-        reasoning = 'Detected summary or lightweight transformation keywords.';
-      } else if (keywordHints.planning || prompt.startsWith('why ') || wordCount >= highThreshold || multiLinePrompt) {
-        tier = 'high';
-        reasoning =
-          previousDecision?.tier === 'high'
-            ? 'Continued high tier based on complexity or keywords.'
-            : 'Detected planning, broad analysis, or a high-complexity request.';
-      } else if (keywordHints.implementation) {
-        tier = 'medium';
-        reasoning = 'Detected implementation-oriented work with bounded execution scope.';
-      } else if (keywordHints.lookup && wordCount <= 24 && toolResultCountSinceLastUserPrompt === 0) {
-        tier = 'low';
-        reasoning = 'Detected a short read-only lookup request.';
-      } else if (previousDecision?.tier === 'high' && toolResultCountSinceLastUserPrompt === 0 && wordCount > lowThreshold) {
-        tier = 'high';
-        reasoning = 'Kept the high tier bias because the conversation still looks exploratory.';
-      } else if (previousDecision?.tier === 'medium' || recentConversation.includes('plan:')) {
-        tier = 'medium';
-        const reasons: string[] = [];
-        if (previousDecision?.tier === 'medium') {
-          reasons.push('continuation of medium tier');
-        }
-        if (recentConversation.includes('plan:')) {
-          reasons.push('active plan detected in context');
-        }
-        reasoning = `Biasing to medium tier: ${reasons.join(', ')}.`;
-      } else if (wordCount <= lowThreshold) {
-        tier = 'low';
-        reasoning = 'Detected a short bounded request.';
-      }
-    }
+    return { suggestedTier: pinnedTier, reasoning: `Pinned to ${pinnedTier} tier via /router-pin.`, isRuleMatched: false };
   }
 
-  return {
-    suggestedTier: tier,
-    reasoning,
-    isRuleMatched,
-  };
+  const prompt = getLastUserText(context).toLowerCase();
+  const ruleResult = matchCustomRule(prompt, rules);
+  if (ruleResult.matched) {
+    return { suggestedTier: ruleResult.tier, reasoning: ruleResult.reasoning, isRuleMatched: true };
+  }
+
+  const heuristic = analyzeHeuristicTier(context, previousDecision, tierStickiness);
+  return { suggestedTier: heuristic.tier, reasoning: heuristic.reasoning, isRuleMatched: false };
 };
 
 /**

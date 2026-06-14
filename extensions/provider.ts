@@ -315,22 +315,26 @@ export const registerRouterProvider = (
                 const { provider: targetProvider, modelId: targetModelId } = parseCanonicalModelRef(modelRef);
 
                 if (tier !== decision.tier || modelRef !== decision.targetLabel) {
-                  const triggers = [
+                  const triggerReasons = [
                     ...(detectedImageInRecentContext ? ['images'] : []),
-                    ...(!fitsContext ? ['context limit exceeded'] : [])
+                    ...(!fitsContext ? ['context limit exceeded'] : []),
                   ].join(' and ');
 
                   if (tier !== decision.tier) {
                     decision = buildRoutingDecision(
                       model.id, profile, tier,
-                      `Forced ${tier} tier because ${decision.tier} tier lacks models for ${triggers}.`,
-                      decision.lastClassifierRunToolCount
+                      `Forced ${tier} tier because ${decision.tier} tier lacks models${triggerReasons ? ` for ${triggerReasons}` : ''}.`,
+                      decision.lastClassifierRunToolCount,
                     );
                   } else {
-                    decision.reasoning += ` (Using ${modelRef} for ${triggers})`;
+                    decision.reasoning += triggerReasons ? ` (Using ${modelRef} for ${triggerReasons})` : '';
                   }
 
-                  Object.assign(decision, { targetProvider, targetModelId, targetLabel: modelRef, isFallback: !tierConfig || modelRef !== tierConfig.model, isContextTriggered: !fitsContext });
+                  decision.targetProvider = targetProvider;
+                  decision.targetModelId = targetModelId;
+                  decision.targetLabel = modelRef;
+                  decision.isFallback = !tierConfig || modelRef !== tierConfig.model;
+                  decision.isContextTriggered = !fitsContext;
                 }
 
                 if (ctx) {
@@ -367,7 +371,7 @@ export const registerRouterProvider = (
                     }
 
                     // Strip pi's reasoning from options — the router controls thinking.
-                    const { onPayload: _origOnPayload, headers: originalHeaders, ...delegationOptions } = options ?? {};
+                    const { onPayload: origOnPayload, headers: originalHeaders, ...delegationOptions } = options ?? {};
 
                     // Build effective headers: request headers → provider headers → OpenRouter attribution
                     const effectiveHeaders: Record<string, string> = {
@@ -387,10 +391,10 @@ export const registerRouterProvider = (
                     };
 
                     if (targetProvider === 'openrouter') {
-                      const onPayload = createOpenRouterOnPayload(ctx?.sessionManager, _origOnPayload);
+                      const onPayload = createOpenRouterOnPayload(ctx?.sessionManager, origOnPayload);
                       if (onPayload) effectiveOptions.onPayload = onPayload;
-                    } else if (_origOnPayload) {
-                      effectiveOptions.onPayload = _origOnPayload;
+                    } else if (origOnPayload) {
+                      effectiveOptions.onPayload = origOnPayload;
                     }
 
                     const delegatedStream = streamSimple(targetModel, effectiveContext, effectiveOptions);
@@ -416,8 +420,9 @@ export const registerRouterProvider = (
                   } catch (err) {
                     lastError = err;
                     const remaining = MAX_ATTEMPTS_PER_MODEL - attempt;
+                    const retryMsg = remaining > 0 ? ` — ${remaining} ${remaining === 1 ? 'retry' : 'retries'} left` : '';
                     ctx?.ui.notify(
-                      `Failed to delegate to model ${modelRef} (attempt ${attempt}/${MAX_ATTEMPTS_PER_MODEL}): ${err}${remaining > 0 ? ` — ${remaining} retr${remaining === 1 ? 'y' : 'ies'} left` : ''}`,
+                      `Failed to delegate to model ${modelRef} (attempt ${attempt}/${MAX_ATTEMPTS_PER_MODEL}): ${err}${retryMsg}`,
                       'warning',
                     );
                   }

@@ -185,21 +185,20 @@ const normalizeTierConfig = (
     );
   }
 
-  let fallbacks: string[] | undefined = undefined;
+  let fallbacks: string[] | undefined;
   if (Array.isArray(value.fallbacks)) {
     fallbacks = [];
     for (const rawFB of value.fallbacks) {
-      if (typeof rawFB === 'string') {
-        const trimmedFB = rawFB.trim();
-        if (!trimmedFB) continue;
-        try {
-          parseCanonicalModelRef(trimmedFB);
-          fallbacks.push(trimmedFB);
-        } catch (error) {
-          warnings.push(
-            `Invalid fallback model "${rawFB}" in profile "${profileName}" ${tier} tier: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
+      if (typeof rawFB !== 'string') continue;
+      const trimmedFB = rawFB.trim();
+      if (!trimmedFB) continue;
+      try {
+        parseCanonicalModelRef(trimmedFB);
+        fallbacks.push(trimmedFB);
+      } catch (error) {
+        warnings.push(
+          `Invalid fallback model "${rawFB}" in profile "${profileName}" ${tier} tier: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     }
   }
@@ -373,13 +372,6 @@ export const loadRouterConfig = (cwd: string): ConfigLoadResult => {
   const projectPath = join(cwd, '.pi', 'model-router.json');
   const globalResult = parseConfigFile(globalPath);
   const projectResult = parseConfigFile(projectPath);
-  const deprecationWarnings: string[] = [];
-  if ('defaultProfile' in globalResult.config) {
-    deprecationWarnings.push('The "defaultProfile" config key is deprecated. Router now uses the profile name embedded in the model ID (e.g. router/balanced).');
-  }
-  if ('defaultProfile' in projectResult.config) {
-    deprecationWarnings.push('The "defaultProfile" config key is deprecated. Router now uses the profile name embedded in the model ID (e.g. router/balanced).');
-  }
   const baseConfig: RouterConfig = { profiles: {} };
   const merged = mergeConfig(
     mergeConfig(baseConfig, globalResult.config),
@@ -391,7 +383,6 @@ export const loadRouterConfig = (cwd: string): ConfigLoadResult => {
     warnings: [
       ...globalResult.warnings,
       ...projectResult.warnings,
-      ...deprecationWarnings,
       ...normalized.warnings,
     ],
   };
@@ -411,10 +402,7 @@ export const OPENROUTER_ATTR_HEADERS: Readonly<Record<string, string>> = {
   'X-OpenRouter-Categories': 'cli-agent',
 };
 
-/**
- * Create an onPayload handler that injects session_id for OpenRouter session tracking.
- * Wraps an optional original onPayload handler.
- */
+/** Create an onPayload handler that injects session_id for OpenRouter session tracking. */
 export const createOpenRouterOnPayload = (
   sessionProvider?: { getSessionId(): string; getSessionName(): string | undefined },
   origOnPayload?: (p: any, m: any) => any,
@@ -432,9 +420,5 @@ export const createOpenRouterOnPayload = (
 export const resolveProfileName = (
   config: RouterConfig,
   requested?: string,
-): string | undefined => {
-  if (requested && config.profiles[requested]) {
-    return requested;
-  }
-  return undefined;
-};
+): string | undefined =>
+  requested && config.profiles[requested] ? requested : undefined;
