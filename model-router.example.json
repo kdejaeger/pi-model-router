@@ -1,5 +1,4 @@
 {
-  "defaultProfile": "auto",
   "debug": false,
   "classifierModels": ["google/gemini-flash-lite-latest", "openrouter/deepseek/deepseek-v4-flash"],
   "classifierModelThinking": "off",

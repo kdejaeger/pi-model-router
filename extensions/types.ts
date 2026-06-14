@@ -2,9 +2,6 @@ import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
 
 export type RouterTier = 'high' | 'medium' | 'low';
 export type RouterPinByProfile = Partial<Record<string, RouterTier>>;
-export type RouterThinkingByTier = Partial<Record<RouterTier, ThinkingLevel>>;
-export type RouterThinkingByProfile = Record<string, RouterThinkingByTier>;
-
 export interface RoutingRule {
   matches: string | string[];
   tier: RouterTier;
@@ -18,21 +15,23 @@ export interface RoutedTierConfig {
 }
 
 export interface RouterProfile {
-  high: RoutedTierConfig;
-  medium: RoutedTierConfig;
-  low: RoutedTierConfig;
+  high?: RoutedTierConfig;
+  medium?: RoutedTierConfig;
+  low?: RoutedTierConfig;
 }
 
 export interface RouterConfig {
-  defaultProfile?: string;
   debug?: boolean;
   classifierModels?: string[];
   classifierModelThinking?: ThinkingLevel;
-  classifierRunOnceAfterToolCount?: number; // Run the classifier once after this many tool continuations. Default: 3.
-  classifierRunAfterToolFailures?: number; // Run the classifier after this many consecutive tool failures in a single turn. Default: 2.
-  classifierInterval?: number; // Run the classifier every Nth tool continuation during long chains. Default: 10.
+  /** Run the classifier once after this many tool continuations. Default: 3. */
+  classifierRunOnceAfterToolCount?: number;
+  /** Run the classifier after this many consecutive tool failures in a single turn. Default: 2. */
+  classifierRunAfterToolFailures?: number;
+  /** Run the classifier every Nth tool continuation during long chains. Default: 10. */
+  classifierInterval?: number;
   tierStickiness?: number;
-  defaultContextThresholdPercent: number;
+  defaultContextThresholdPercent?: number;
   contextThresholdPercentOverrides?: Record<string, number>;
   rules?: RoutingRule[];
   profiles: Record<string, RouterProfile>;
@@ -50,7 +49,8 @@ export interface RoutingDecision {
   isFallback?: boolean;
   isContextTriggered?: boolean;
   isHeuristicRuleMatched?: boolean;
-  lastClassifierRunToolCount?: number; // Tool-continuation count when the classifier last ran
+  /** Tool-continuation count when the classifier last ran */
+  lastClassifierRunToolCount?: number;
 }
 
 export interface HeuristicAnalysis {
@@ -64,9 +64,7 @@ export interface RouterPersistedState {
   selectedProfile: string;
   pinTier?: RouterTier;
   pinByProfile?: RouterPinByProfile;
-  thinkingByProfile?: RouterThinkingByProfile;
   debugEnabled?: boolean;
-  widgetEnabled?: boolean;
   debugHistory?: RoutingDecision[];
   lastDecision?: RoutingDecision;
   lastNonRouterModel?: string;

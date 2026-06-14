@@ -6,37 +6,28 @@ import {
   type RouterConfig,
   type RoutingDecision,
   type RouterPinByProfile,
-  type RouterThinkingByProfile,
-  type RouterTier,
   type CustomSessionEntry,
 } from './types';
 import {
-  FALLBACK_CONFIG,
   loadRouterConfig,
   profileNames,
   resolveProfileName,
 } from './config';
-import { MAX_DEBUG_HISTORY } from './constants';
 import { isRouterPersistedState, buildPersistedState } from './state';
 import { updateStatus } from './ui';
 import { registerCommands } from './commands';
 import { registerRouterProvider } from './provider';
 
 const routerExtension = (pi: ExtensionAPI) => {
-  let currentConfig: RouterConfig = FALLBACK_CONFIG;
+  let currentConfig: RouterConfig = { profiles: {} };
   let currentModelRegistry: ExtensionContext['modelRegistry'] | undefined;
   let currentCwd = process.cwd();
   let lastDecision: RoutingDecision | undefined;
   let debugEnabled = false;
   let routerEnabled = false;
-  let selectedProfile = resolveProfileName(
-    FALLBACK_CONFIG,
-    FALLBACK_CONFIG.defaultProfile,
-  );
-  let widgetEnabled = false;
+  let selectedProfile: string | undefined;
   let lastLoadedModelKeys = '';
   let pinnedTierByProfile: RouterPinByProfile = {};
-  let thinkingByProfile: RouterThinkingByProfile = {};
   let debugHistory: RoutingDecision[] = [];
   let lastNonRouterModel: string | undefined;
   let lastExtensionContext: ExtensionContext | undefined;
@@ -56,12 +47,9 @@ const routerExtension = (pi: ExtensionAPI) => {
     }
   };
 
+  const MAX_DEBUG_HISTORY = 12;
   const recordDebugDecision = (decision: RoutingDecision) => {
     debugHistory = [...debugHistory, decision].slice(-MAX_DEBUG_HISTORY);
-  };
-
-  const getThinkingOverride = (profileName: string, tier: RouterTier) => {
-    return thinkingByProfile[profileName]?.[tier];
   };
 
   const persistState = () => {
@@ -69,9 +57,7 @@ const routerExtension = (pi: ExtensionAPI) => {
       routerEnabled,
       selectedProfile,
       pinnedTierByProfile,
-      thinkingByProfile,
       debugEnabled,
-      widgetEnabled,
       debugHistory,
       lastDecision,
       lastNonRouterModel,
@@ -103,8 +89,6 @@ const routerExtension = (pi: ExtensionAPI) => {
         selectedProfile,
         pinnedTierByProfile,
         lastDecision,
-        lastNonRouterModel,
-        widgetEnabled
       ),
     reloadConfig: (
       ctx?: ExtensionContext,
@@ -116,7 +100,12 @@ const routerExtension = (pi: ExtensionAPI) => {
       if (!options?.preserveDebug) {
         debugEnabled = currentConfig.debug ?? false;
       }
+      const prevSelectedProfile = selectedProfile;
       selectedProfile = resolveProfileName(currentConfig, selectedProfile);
+      if (!selectedProfile && prevSelectedProfile && routerEnabled) {
+        ctx?.ui.notify(`Router profile "${prevSelectedProfile}" is no longer configured. Router disabled.`, 'warning');
+        routerEnabled = false;
+      }
       actions.registerRouterProvider();
       if (ctx) {
         actions.updateStatus(ctx);
@@ -132,36 +121,31 @@ const routerExtension = (pi: ExtensionAPI) => {
         return;
       }
 
-      const fallbackProfile = resolveProfileName(
-        currentConfig,
-        selectedProfile,
+      // The active router model's profile no longer exists in config
+      ctx.ui.notify(
+        `Router profile "${ctx.model.id}" is no longer configured.`,
+        'warning',
       );
-      const routerModel = ctx.modelRegistry.find('router', fallbackProfile);
-      selectedProfile = fallbackProfile;
-      if (!routerModel) {
-        ctx.ui.notify(`Router profile "${ctx.model.id}" is no longer configured.`, 'warning');
-        return;
-      }
-
-      await setModelInternally(routerModel);
-      ctx.ui.notify(`Router profile "${ctx.model.id}" is no longer configured. Switched to router/${fallbackProfile}.`, 'warning');
+      routerEnabled = false;
+      selectedProfile = undefined;
     },
     switchToRouterProfile: async (
       profileName: string,
       ctx: ExtensionContext,
       strict = true,
     ) => {
-      if (strict && !currentConfig.profiles[profileName]) {
-        ctx.ui.notify(`Unknown router profile: ${profileName}`, 'error');
+      if (!currentConfig.profiles[profileName]) {
+        if (strict) {
+          ctx.ui.notify(`Unknown router profile: ${profileName}`, 'error');
+        }
         return false;
       }
-      const resolvedProfile = resolveProfileName(currentConfig, profileName);
 
       // Ensure the provider is registered with current capacities for this profile
       actions.registerRouterProvider();
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      const routerModel = ctx.modelRegistry.find('router', resolvedProfile);
+      const routerModel = ctx.modelRegistry.find('router', profileName);
       if (!routerModel) {
         ctx.ui.notify(`Unknown router profile: ${profileName}`, 'error');
         return false;
@@ -171,10 +155,10 @@ const routerExtension = (pi: ExtensionAPI) => {
       }
       const success = await setModelInternally(routerModel);
       if (!success) {
-        ctx.ui.notify(`Failed to switch to router/${resolvedProfile}`, 'error');
+        ctx.ui.notify(`Failed to switch to router/${profileName}`, 'error');
         return false;
       }
-      selectedProfile = resolvedProfile;
+      selectedProfile = profileName;
       routerEnabled = true;
       persistState();
       pi.setThinkingLevel('off');
@@ -218,8 +202,12 @@ const routerExtension = (pi: ExtensionAPI) => {
           set lastDecision(v) {
             lastDecision = v;
           },
-          thinkingByProfile,
-          pinnedTierByProfile,
+          get pinnedTierByProfile() {
+            return pinnedTierByProfile;
+          },
+          set pinnedTierByProfile(v) {
+            pinnedTierByProfile = v;
+          },
           get debugEnabled() {
             return debugEnabled;
           },
@@ -227,7 +215,6 @@ const routerExtension = (pi: ExtensionAPI) => {
         {
           persistState,
           recordDebugDecision,
-          getThinkingOverride,
           updateStatus: actions.updateStatus,
         },
       );
@@ -251,8 +238,6 @@ const routerExtension = (pi: ExtensionAPI) => {
       ctx.model?.provider === 'router' ? ctx.model.id : selectedProfile,
     );
     pinnedTierByProfile = {};
-    thinkingByProfile = {};
-    widgetEnabled = false;
     debugHistory = [];
     lastNonRouterModel =
       ctx.model && ctx.model.provider !== 'router'
@@ -273,19 +258,19 @@ const routerExtension = (pi: ExtensionAPI) => {
         currentConfig,
         savedState.selectedProfile,
       );
-      routerEnabled = savedState.enabled;
+      if (!selectedProfile) {
+        routerEnabled = false;
+      } else {
+        routerEnabled = savedState.enabled;
+      }
       lastDecision = savedState.lastDecision;
       pinnedTierByProfile = savedState.pinByProfile
         ? { ...savedState.pinByProfile }
         : {};
-      thinkingByProfile = savedState.thinkingByProfile
-        ? { ...savedState.thinkingByProfile }
-        : {};
-      if (savedState.pinTier) {
+      if (savedState.pinTier && selectedProfile) {
         pinnedTierByProfile[selectedProfile] = savedState.pinTier;
       }
       debugEnabled = savedState.debugEnabled ?? debugEnabled;
-      widgetEnabled = savedState.widgetEnabled ?? widgetEnabled;
       debugHistory = savedState.debugHistory
         ? [...savedState.debugHistory].slice(-MAX_DEBUG_HISTORY)
         : [];
@@ -294,7 +279,7 @@ const routerExtension = (pi: ExtensionAPI) => {
 
     await actions.ensureValidActiveRouterProfile(ctx);
 
-    if (routerEnabled) {
+    if (routerEnabled && selectedProfile) {
       const routerModel = ctx.modelRegistry.find('router', selectedProfile);
       if (routerModel) {
         const success = await setModelInternally(routerModel);
@@ -302,7 +287,7 @@ const routerExtension = (pi: ExtensionAPI) => {
           ctx.ui.notify(`Failed to restore router/${selectedProfile} after relaunch.`, 'warning');
           routerEnabled = false;
         }
-      } else {
+      } else if (selectedProfile) {
         ctx.ui.notify(`Unable to restore router/${selectedProfile}; model is unavailable.`, 'warning');
         routerEnabled = false;
         ctx.ui.setHiddenThinkingLabel?.();
@@ -333,8 +318,12 @@ const routerExtension = (pi: ExtensionAPI) => {
       set selectedProfile(v) {
         selectedProfile = v;
       },
-      pinnedTierByProfile,
-      thinkingByProfile,
+      get pinnedTierByProfile() {
+        return pinnedTierByProfile;
+      },
+      set pinnedTierByProfile(v) {
+        pinnedTierByProfile = v;
+      },
       get lastDecision() {
         return lastDecision;
       },
@@ -349,12 +338,6 @@ const routerExtension = (pi: ExtensionAPI) => {
       },
       set debugEnabled(v) {
         debugEnabled = v;
-      },
-      get widgetEnabled() {
-        return widgetEnabled;
-      },
-      set widgetEnabled(v) {
-        widgetEnabled = v;
       },
       get debugHistory() {
         return debugHistory;
@@ -386,6 +369,10 @@ const routerExtension = (pi: ExtensionAPI) => {
     if (!isInitialized || isRouterDelegating) return;
     if (event.model.provider === 'router') {
       const profileName = resolveProfileName(currentConfig, event.model.id);
+      if (!profileName) {
+        ctx.ui.notify(`Unknown router profile: ${event.model.id}`, 'error');
+        return;
+      }
 
       // If the selected model has stale capacities (e.g. from the initial registration),
       // re-apply the model from the registry to force a TUI refresh.
@@ -410,10 +397,15 @@ const routerExtension = (pi: ExtensionAPI) => {
   });
 
   pi.on('turn_end', async (_event, ctx) => {
-    if (routerEnabled && ctx.model?.provider !== 'router') {
+    if (routerEnabled && selectedProfile && ctx.model?.provider !== 'router') {
       const routerModel = ctx.modelRegistry.find('router', selectedProfile);
       if (routerModel) {
-        await setModelInternally(routerModel);
+        const success = await setModelInternally(routerModel);
+        if (!success) {
+          ctx.ui.notify('Failed to re-assert router model after turn. Router disabled.', 'warning');
+          routerEnabled = false;
+          selectedProfile = undefined;
+        }
       }
     }
     persistState();

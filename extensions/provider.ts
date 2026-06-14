@@ -4,15 +4,14 @@ import {
   type AssistantMessageEventStream,
   type Context,
   createAssistantMessageEventStream,
-  type Message,
   type Model,
   type SimpleStreamOptions,
   streamSimple
 } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
-import type { RouterConfig, RouterPinByProfile, RouterThinkingByProfile, RouterTier, RoutingDecision } from './types';
-import { parseCanonicalModelRef, profileNames, resolveModelFromRef, ROUTER_TIERS } from './config';
-import { buildRoutingDecision, countToolResultsSinceLastUserPrompt, extractTextFromContent, makeHeuristicAnalysis, runClassifier, shouldRunClassifier } from './routing';
+import type { RouterConfig, RouterPinByProfile, RouterTier, RoutingDecision } from './types';
+import { createOpenRouterOnPayload, OPENROUTER_ATTR_HEADERS, parseCanonicalModelRef, profileNames, resolveModelFromRef, ROUTER_TIERS } from './config';
+import { buildRoutingDecision, countToolResultsSinceLastUserPrompt, decisionsMatch, extractTextFromContent, makeHeuristicAnalysis, runClassifier, shouldRunClassifier } from './routing';
 import { formatDecision } from './ui';
 
 const createErrorMessage = (model: Model<Api>, message: string): AssistantMessage => {
@@ -50,59 +49,31 @@ const truncateContext = (context: Context, limit: number): Context => {
   const messages = [...context.messages];
   if (messages.length <= 1) return context;
 
-  const getSystemTokens = () => (context.systemPrompt ? estimateTokens(context.systemPrompt) : 0);
-
-  // Initial estimate
-  const totalTokens = getSystemTokens() + messages.reduce((sum, m) => sum + estimateTokens(extractTextFromContent(m.content)), 0);
+  const systemTokens = context.systemPrompt ? estimateTokens(context.systemPrompt) : 0;
+  const totalTokens = systemTokens + messages.reduce((sum, m) => sum + estimateTokens(extractTextFromContent(m.content)), 0);
   if (totalTokens <= limit) return context;
 
-  const latestMessage = messages.pop();
-  if (!latestMessage) return context;
+  const latestMessage = messages.pop()!;
 
   // Remove oldest until it fits
   while (messages.length > 0) {
     const currentTokens =
-      getSystemTokens() +
+      systemTokens +
       estimateTokens(extractTextFromContent(latestMessage.content)) +
       messages.reduce((sum, m) => sum + estimateTokens(extractTextFromContent(m.content)), 0);
-
     if (currentTokens <= limit) break;
-    messages.shift(); // Remove oldest
+    messages.shift();
   }
 
-  const finalMessages: Message[] = [];
-  finalMessages.push(...messages);
-  finalMessages.push(latestMessage);
-
-  return { ...context, messages: finalMessages };
+  return { ...context, messages: [...messages, latestMessage] };
 };
 
-const supportsReasoning = (
-  profile: RouterConfig['profiles'][string],
-  modelRegistry: ExtensionContext['modelRegistry'] | undefined,
-): boolean => {
-  if (!modelRegistry) return false;
-
-  for (const tier of ROUTER_TIERS) {
-    const modelsInTier = [profile[tier].model, ...(profile[tier].fallbacks ?? [])];
-    for (const modelRef of modelsInTier) {
-      if (resolveModelFromRef(modelRef, modelRegistry)?.reasoning) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-};
-
-const imageDetectedInRecentContext = (context: Context): boolean => {
+const hasRecentImage = (context: Context): boolean => {
   // Only check the last 6 messages (typically covers the last 3 full turns (3 user messages and 3 assistant responses)
   // to detect images relevant to the current turn. This covers: direct user uploads, tool results from screenshot reads,
   // and assistant messages with images - without firing on stale images from many turns ago.
   const recentMessages = context.messages.slice(-6);
-  return recentMessages.some((msg) => {
-    return Array.isArray(msg.content) && msg.content.some((part) => part.type === 'image');
-  });
+  return recentMessages.some((msg) => Array.isArray(msg.content) && msg.content.some((part) => part.type === 'image'));
 };
 
 const checkModelSupportsImage = (
@@ -119,17 +90,15 @@ export const registerRouterProvider = (
     readonly currentConfig: RouterConfig;
     readonly currentModelRegistry: ExtensionContext['modelRegistry'] | undefined;
     readonly lastExtensionContext: ExtensionContext | undefined;
-    selectedProfile: string;
+    selectedProfile: string | undefined;
     routerEnabled: boolean;
     lastDecision: RoutingDecision | undefined;
-    readonly thinkingByProfile: RouterThinkingByProfile;
     readonly pinnedTierByProfile: RouterPinByProfile;
     debugEnabled: boolean;
   },
   actions: {
     persistState: () => void;
     recordDebugDecision: (decision: RoutingDecision) => void;
-    getThinkingOverride: (profileName: string, tier: RouterTier) => any;
     updateStatus: (ctx: ExtensionContext) => void;
   },
 ) => {
@@ -145,6 +114,7 @@ export const registerRouterProvider = (
     if (state.currentModelRegistry) {
       for (const tier of ROUTER_TIERS) {
         const tierConfig = profile[tier];
+        if (!tierConfig) continue;
         const modelsInTier = [tierConfig.model, ...(tierConfig.fallbacks ?? [])];
         for (const modelRef of modelsInTier) {
           const model = resolveModelFromRef(modelRef, state.currentModelRegistry);
@@ -160,10 +130,23 @@ export const registerRouterProvider = (
       }
     }
 
+    const profileSupportsReasoning = state.currentModelRegistry
+      ? ROUTER_TIERS.some((tier) => {
+          const tierConfig = profile[tier];
+          if (!tierConfig) return false;
+          return (
+            resolveModelFromRef(tierConfig.model, state.currentModelRegistry)?.reasoning ||
+            tierConfig.fallbacks?.some(
+              (fb) => resolveModelFromRef(fb, state.currentModelRegistry)?.reasoning,
+            )
+          );
+        })
+      : false;
+
     return {
       id: name,
-      name: `Router ${name}`,
-      reasoning: supportsReasoning(profile, state.currentModelRegistry),
+      name: `⇋ ${name}`,
+      reasoning: profileSupportsReasoning,
       input: ['text', 'image'] as ('text' | 'image')[],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: maxContextWindow,
@@ -174,11 +157,12 @@ export const registerRouterProvider = (
   if (state.currentModelRegistry) {
     const invalidOverrides = Object.keys(
       state.currentConfig.contextThresholdPercentOverrides ?? {},
-    ).filter((modelRef: string) => !resolveModelFromRef(modelRef, state.currentModelRegistry));
+    ).filter((modelRef) => !resolveModelFromRef(modelRef, state.currentModelRegistry));
 
     if (invalidOverrides.length > 0) {
-      throw new Error(
+      state.lastExtensionContext?.ui.notify(
         `Router configuration contains contextThresholdPercentOverrides for models that do not exist: ${invalidOverrides.map((modelRef) => JSON.stringify(modelRef)).join(', ')}`,
+        'warning',
       );
     }
   }
@@ -263,7 +247,7 @@ export const registerRouterProvider = (
               }
             }
 
-            decision = buildRoutingDecision(model.id, profile, resolvedTier, resolvedReasoning, state.thinkingByProfile[model.id], lastClassifierRunToolCount);
+            decision = buildRoutingDecision(model.id, profile, resolvedTier, resolvedReasoning, lastClassifierRunToolCount);
             decision.isHeuristicRuleMatched = heuristicAnalysis.isRuleMatched;
           }
 
@@ -275,20 +259,23 @@ export const registerRouterProvider = (
             ctx?.ui.notify('Unable to get context usage (and determine tokens used) from pi', 'warning');
           }
 
-          const detectedImageInRecentContext = imageDetectedInRecentContext(context);
+          const detectedImageInRecentContext = hasRecentImage(context);
           const tiersToTry = ROUTER_TIERS.slice(0, ROUTER_TIERS.indexOf(decision.tier) + 1).reverse();
           const triedModels = new Set<string>();
           const failureReasons: string[] = [];
-          let lastError: any;
+          let lastError: unknown;
           let success = false;
 
-          // Pass 1: Try models that satisfy both image support and context thresholds.
-          // Pass 2: Last resort — try models that satisfy image support but need context truncation.
+          // Pass 1: models that satisfy both image support and context thresholds.
+          // Pass 2: last resort — models that satisfy image support but need context truncation.
           attemptLoop: for (const pass of [1, 2]) {
             for (const tier of tiersToTry) {
-              const modelsInTier = [profile[tier].model, ...(profile[tier].fallbacks ?? [])];
+              const tierConfig = profile[tier];
+              if (!tierConfig) continue;
+              const modelsInTier = [tierConfig.model, ...(tierConfig.fallbacks ?? [])];
 
-              if (pass === 2) { // sort models by context window descending to minimize truncation.
+              if (pass === 2) {
+                // Sort models by context window descending to minimize truncation.
                 modelsInTier.sort((a, b) => {
                   const limitA = resolveModelFromRef(a, modelRegistry)?.contextWindow || 0;
                   const limitB = resolveModelFromRef(b, modelRegistry)?.contextWindow || 0;
@@ -315,7 +302,7 @@ export const registerRouterProvider = (
 
                 const thresholdPercent =
                   currentConfig.contextThresholdPercentOverrides?.[modelRef] ??
-                  currentConfig.defaultContextThresholdPercent;
+                  currentConfig.defaultContextThresholdPercent ?? 90;
                 const targetContextWindow = targetModel.contextWindow || 200_000;
                 const targetContextLimit = Math.floor((thresholdPercent / 100) * targetContextWindow);
                 const fitsContext = tokensUsed <= targetContextLimit;
@@ -337,21 +324,23 @@ export const registerRouterProvider = (
                     decision = buildRoutingDecision(
                       model.id, profile, tier,
                       `Forced ${tier} tier because ${decision.tier} tier lacks models for ${triggers}.`,
-                      state.thinkingByProfile[model.id], decision.lastClassifierRunToolCount
+                      decision.lastClassifierRunToolCount
                     );
                   } else {
                     decision.reasoning += ` (Using ${modelRef} for ${triggers})`;
                   }
 
-                  Object.assign(decision, { targetProvider, targetModelId, targetLabel: modelRef, isFallback: modelRef !== profile[tier].model, isContextTriggered: !fitsContext });
+                  Object.assign(decision, { targetProvider, targetModelId, targetLabel: modelRef, isFallback: !tierConfig || modelRef !== tierConfig.model, isContextTriggered: !fitsContext });
                 }
 
                 if (ctx) {
-                  if (state.debugEnabled) ctx.ui.notify('Decision ' + formatDecision(decision), 'info');
+                  if (state.debugEnabled && !decisionsMatch(state.lastDecision, decision)) {
+                    ctx.ui.notify(`Decision ${formatDecision(decision)}`, 'info');
+                  }
                   actions.updateStatus(ctx);
                 }
 
-                const auth = await modelRegistry!.getApiKeyAndHeaders(targetModel);
+                const auth = await modelRegistry.getApiKeyAndHeaders(targetModel);
                 if (!auth.ok || !auth.apiKey) {
                   const reason = auth.ok
                     ? `No API key for model: ${modelRef}`
@@ -365,19 +354,11 @@ export const registerRouterProvider = (
                 const MAX_ATTEMPTS_PER_MODEL = 2;
                 for (let attempt = 1; attempt <= MAX_ATTEMPTS_PER_MODEL; attempt++) {
                   try {
-                    const thinkingOverride = actions.getThinkingOverride(model.id, decision.tier);
                     const delegatedReasoning =
-                      targetModel.reasoning && (thinkingOverride ?? decision.thinking) !== 'off'
-                        ? (thinkingOverride ?? decision.thinking)
+                      targetModel.reasoning && decision.thinking !== 'off'
+                        ? decision.thinking
                         : undefined;
                     pi.setThinkingLevel(delegatedReasoning ?? 'off');
-                    if (ctx) {
-                      if (delegatedReasoning) {
-                        ctx.ui.setHiddenThinkingLabel?.(`Thinking (${targetProvider}/${targetModelId})...`);
-                      } else {
-                        ctx.ui.setHiddenThinkingLabel?.();
-                      }
-                    }
 
                     let effectiveContext = context;
                     if (!fitsContext) {
@@ -385,19 +366,39 @@ export const registerRouterProvider = (
                       effectiveContext = truncateContext(context, targetContextLimit);
                     }
 
-                    const effectiveOptions = {
-                      ...options,
+                    // Strip pi's reasoning from options — the router controls thinking.
+                    const { onPayload: _origOnPayload, headers: originalHeaders, ...delegationOptions } = options ?? {};
+
+                    // Build effective headers: request headers → provider headers → OpenRouter attribution
+                    const effectiveHeaders: Record<string, string> = {
+                      ...(originalHeaders as Record<string, string> | undefined),
+                      ...(auth.headers ?? {}),
+                    };
+
+                    if (targetProvider === 'openrouter') {
+                      Object.assign(effectiveHeaders, OPENROUTER_ATTR_HEADERS);
+                    }
+
+                    const effectiveOptions: Record<string, unknown> = {
+                      ...delegationOptions,
                       apiKey: auth.apiKey,
-                      headers: auth.headers,
+                      headers: effectiveHeaders,
                       ...(delegatedReasoning ? { reasoning: delegatedReasoning } : {})
                     };
+
+                    if (targetProvider === 'openrouter') {
+                      const onPayload = createOpenRouterOnPayload(ctx?.sessionManager, _origOnPayload);
+                      if (onPayload) effectiveOptions.onPayload = onPayload;
+                    } else if (_origOnPayload) {
+                      effectiveOptions.onPayload = _origOnPayload;
+                    }
 
                     const delegatedStream = streamSimple(targetModel, effectiveContext, effectiveOptions);
 
                     let contentReceived = false;
                     for await (const event of delegatedStream) {
                       if (event.type === 'error' && !contentReceived) {
-                        throw new Error((event as any).error?.errorMessage || 'Model failed before sending content.');
+                        throw new Error(((event as { error?: AssistantMessage }).error?.errorMessage) || 'Model failed before sending content.');
                       }
                       if (
                         event.type === 'text_delta' ||

@@ -1,5 +1,5 @@
 {
-  "name": "@yeliu84/pi-model-router",
+  "name": "@kdejaeger/pi-model-router",
   "version": "0.2.0",
   "type": "module",
   "description": "Intelligent per-turn model router extension for the pi coding agent",
@@ -12,14 +12,14 @@
     "extension"
   ],
   "license": "MIT",
-  "author": "Ye Liu",
+  "author": "Koen De Jaeger",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yeliu84/pi-model-router.git"
+    "url": "https://github.com/kdejaeger/pi-model-router.git"
   },
-  "homepage": "https://github.com/yeliu84/pi-model-router#readme",
+  "homepage": "https://github.com/kdejaeger/pi-model-router#readme",
   "bugs": {
-    "url": "https://github.com/yeliu84/pi-model-router/issues"
+    "url": "https://github.com/kdejaeger/pi-model-router/issues"
   },
   "files": [
     "extensions/",

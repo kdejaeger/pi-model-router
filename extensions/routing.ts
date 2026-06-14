@@ -4,12 +4,11 @@ import type {
   HeuristicAnalysis,
   RouterConfig,
   RouterProfile,
-  RouterThinkingByTier,
   RouterTier,
   RoutingDecision,
   RoutingRule,
 } from './types';
-import { parseCanonicalModelRef, resolveModelFromRef } from './config';
+import { createOpenRouterOnPayload, OPENROUTER_ATTR_HEADERS, parseCanonicalModelRef, resolveModelFromRef } from './config';
 
 export const extractTextFromContent = (content: string | Message['content']): string => {
   if (typeof content === 'string') {
@@ -91,7 +90,7 @@ const countConsecutiveRecentToolFailuresSinceLastUserPrompt = (context: Context)
     const msg = context.messages[i] as Message;
     if (msg.role === 'user') break;
     if (msg.role !== 'toolResult') continue;
-    if ((msg as any).isError) {
+    if ((msg as { isError?: boolean }).isError) {
       count++;
     } else {
       break; // success resets the chain
@@ -119,6 +118,7 @@ const EXPLICIT_HIGH_HINTS = [
   'step by step',
   'think hard',
   'highest quality',
+  'ultrathink',
 ];
 const EXPLICIT_LOW_HINTS = ['fast', 'cheap', 'quick', 'quickly', 'brief', 'briefly', 'one sentence', 'one line', 'tiny', 'small'];
 const PLANNING_KEYWORDS = [
@@ -176,25 +176,9 @@ export const buildRoutingDecision = (
   profile: RouterProfile,
   tier: RouterTier,
   reasoning: string,
-  thinkingOverrides?: RouterThinkingByTier,
   lastClassifierRunToolCount?: number,
 ): RoutingDecision => {
-  const routedTierConf = profile[tier];
-  let baseThinking = routedTierConf.thinking;
-  if (!baseThinking) {
-    switch (tier) {
-      case 'high':
-        baseThinking = 'high';
-        break;
-      case 'low':
-        baseThinking = 'low';
-        break;
-      default:
-        baseThinking = 'medium';
-        break;
-    }
-  }
-  const effectiveThinking = thinkingOverrides?.[tier] ?? baseThinking;
+  const routedTierConf = profile[tier]!;
 
   const { provider, modelId } = parseCanonicalModelRef(routedTierConf.model);
 
@@ -205,11 +189,23 @@ export const buildRoutingDecision = (
     targetModelId: modelId,
     targetLabel: routedTierConf.model,
     reasoning,
-    thinking: effectiveThinking,
+    thinking: routedTierConf.thinking!,
     timestamp: Date.now(),
     lastClassifierRunToolCount,
   };
 };
+
+/** Compare only the semantically meaningful fields of two routing decisions. */
+export const decisionsMatch = (a: RoutingDecision | undefined, b: RoutingDecision): boolean =>
+  a !== undefined &&
+  a.profile === b.profile &&
+  a.tier === b.tier &&
+  a.targetProvider === b.targetProvider &&
+  a.targetModelId === b.targetModelId &&
+  a.thinking === b.thinking &&
+  a.isFallback === b.isFallback &&
+  a.isContextTriggered === b.isContextTriggered &&
+  a.reasoning === b.reasoning;
 
 /**
  * Analyze a user prompt and conversation context using local heuristics.
@@ -347,11 +343,9 @@ export const shouldRunClassifier = (
     triggers.push(`interval(%${confInterval})`);
   }
 
-  if (debugEnabled && lastExtensionContext) {
+  if (debugEnabled && lastExtensionContext && triggers.length > 0) {
     lastExtensionContext.ui.notify(
-      triggers.length > 0
-        ? `RUN classifier — ${triggers.join(', ')} (cont:${toolResultsCount})`
-        : `SKIP classifier (cont:${toolResultsCount}, fail:${failCount})`,
+      `RUN classifier — ${triggers.join(', ')} (cont:${toolResultsCount})`,
       'info',
     );
   }
@@ -416,6 +410,7 @@ export const runClassifier = async (
   const classifierPrompt = buildClassifierPrompt(context, previousDecision, heuristicAnalysis);
   const classifierContext: Context = { messages: [{ role: 'user', content: classifierPrompt, timestamp: Date.now() }] };
 
+  const MAX_CLASSIFIER_ATTEMPTS = 3;
   for (const classifierModelRef of classifierModels) {
     const model = resolveModelFromRef(classifierModelRef, modelRegistry);
     if (!model) {
@@ -432,14 +427,28 @@ export const runClassifier = async (
       continue;
     }
 
-    const MAX_CLASSIFIER_ATTEMPTS = 3;
     for (let attempt = 1; attempt <= MAX_CLASSIFIER_ATTEMPTS; attempt++) {
       try {
-        const stream = streamSimple(model, classifierContext, {
+        const isOpenRouter = classifierModelRef.startsWith('openrouter/');
+
+        // Build headers: base headers + OpenRouter attribution when applicable
+        const classifierHeaders: Record<string, string> = {
+          ...(auth.headers ?? {}),
+          ...(isOpenRouter ? OPENROUTER_ATTR_HEADERS : {}),
+        };
+
+        const classifierOptions: Record<string, unknown> = {
           apiKey: auth.apiKey,
-          headers: auth.headers,
+          headers: classifierHeaders,
           ...(thinking && thinking !== 'off' ? { reasoning: thinking } : {}),
-        });
+        };
+
+        if (isOpenRouter) {
+          const onPayload = createOpenRouterOnPayload(extCtx?.sessionManager);
+          if (onPayload) classifierOptions.onPayload = onPayload;
+        }
+
+        const stream = streamSimple(model, classifierContext, classifierOptions);
         let fullText = '';
         for await (const event of stream) {
           if (event.type === 'error') throw new Error(event.error?.errorMessage ?? 'Unknown classifier error');
@@ -456,20 +465,20 @@ export const runClassifier = async (
             reasoning: reasoningMatch ? reasoningMatch[1].trim() : 'Classifier decision.',
           };
         }
-      } catch (err) {
-        const errMsg = (err as Error)?.message ?? String(err);
-        if (errMsg && debugEnabled) {
-          extCtx?.ui.notify(`[router] Classifier error on "${classifierModelRef}" (attempt ${attempt}/${MAX_CLASSIFIER_ATTEMPTS}): ${errMsg}`, 'warning');
+        if (debugEnabled && extCtx) {
+          extCtx.ui.notify('[router] Classifier returned unparseable response', 'warning');
         }
+      } catch (_err) {
         if (attempt < MAX_CLASSIFIER_ATTEMPTS) {
+          const errMsg = (_err as Error)?.message ?? String(_err);
           const detectedStatus = /429|Too Many Requests|rate.?limit/i.test(errMsg) ? 429 : undefined;
-          const waitMs = detectedStatus === 429 ? attempt * 3000 : 1000;
-          if (debugEnabled) extCtx?.ui.notify(`[router] Retrying classifier "${classifierModelRef}" in ${waitMs}ms...`, 'warning');
+          const waitMs = detectedStatus === 429 ? attempt * 2000 : 1000;
           await new Promise((resolve) => setTimeout(resolve, waitMs));
         }
       }
     }
   }
 
+  extCtx?.ui.notify('[router] Classifier exhausted all models — falling back to heuristic routing.', 'warning');
   return undefined;
 };

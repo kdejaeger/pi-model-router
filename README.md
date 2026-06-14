@@ -1,9 +1,9 @@
 # pi-model-router
 
-[![npm version](https://img.shields.io/npm/v/@yeliu84/pi-model-router)](https://www.npmjs.com/package/@yeliu84/pi-model-router)
+[![npm version](https://img.shields.io/npm/v/@kdejaeger/pi-model-router)](https://www.npmjs.com/package/@kdejaeger/pi-model-router)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Intelligent per-turn model router extension** for the [pi-coding-agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent). Automatically selects between high, medium, and low-tier LLMs on every turn based on task intent, context size, and custom rules -- with automatic fallbacks, image-aware rerouting, context truncation, and phase awareness.
+**Intelligent per-turn model router extension** (forked from [yeliu84/pi-model-router](https://github.com/yeliu84/pi-model-router)) for the [pi-coding-agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent). Automatically selects between high, medium, and low-tier LLMs on every turn based on task intent, context size, and custom rules -- with automatic fallbacks, image-aware rerouting, context truncation, and phase awareness.
 
 > Think of it as an automatic transmission for your LLM -- it shifts gears up or down depending on what you're doing, so you never waste compute on a trivial task or run out of reasoning power on a complex one.
 
@@ -47,13 +47,13 @@ The pi-model-router registers itself as a **custom logical provider** called `ro
 ### As a user
 
 ```bash
-pi install npm:@yeliu84/pi-model-router
+pi install npm:@kdejaeger/pi-model-router
 ```
 
 ### For development
 
 ```bash
-git clone https://github.com/yeliu84/pi-model-router.git
+git clone https://github.com/kdejaeger/pi-model-router.git
 cd pi-model-router
 pi install .
 ```
@@ -74,7 +74,6 @@ pi -e ./extensions/index.ts
 
    ```json
    {
-     "defaultProfile": "balanced",
      "profiles": {
        "balanced": {
          "high":    { "model": "openai/gpt-5.4-pro",          "thinking": "high" },
@@ -97,7 +96,7 @@ pi -e ./extensions/index.ts
      /router profile balanced
      ```
 
-   - **Persistent activation** (all sessions): Add `router/balanced` (and/or `router/cheap`) to your [scoped models list](#activating-the-router) in pi's configuration. On restart, the router will load automatically with the `defaultProfile`.
+   - **Persistent activation** (all sessions): Add `router/balanced` (and/or `router/cheap`) to your [scoped models list](#activating-the-router) in pi's configuration. On restart, the router will load automatically with the profile you last used.
 
 4. **Check the status:**
 
@@ -124,32 +123,15 @@ Configs are merged: **Fallback defaults <- Global config <- Project config**.
 
 Project config values override global values, which override built-in defaults. Profiles are merged **deeply** -- if you define only a `high` tier override for a profile in your project config, the `medium` and `low` tiers are inherited from the global config (or fallback defaults).
 
-> **Fallback profile shows in autocomplete:** Because the merge starts with the fallback config, its `"auto"` profile will appear in tab-completion (e.g. `/router profile [TAB]` shows `router/auto`) even though its models are generic placeholders. This is harmless -- just switch to your real profile with `/router profile <name>`. If it bothers you, explicitly add a profile named `"auto"` in your config to override it.
+**When no config file exists**, the router loads with an empty profile list and no active models. Create a `.pi/model-router.json` with at least one profile to use the router.
 
-**Fallback defaults** (used when no config file exists):
 
-```json
-{
-  "defaultProfile": "auto",
-  "debug": false,
-  "profiles": {
-    "auto": {
-      "high":   { "model": "openai/gpt-5.4-pro",        "thinking": "off" },
-      "medium": { "model": "google/gemini-flash-latest", "thinking": "off" },
-      "low":    { "model": "openai/gpt-5.4-nano",        "thinking": "off" }
-    }
-  }
-}
-```
-
-There are two unrelated uses of `"auto"` in this project: (1) as a **profile name** (name your profiles descriptively, like `"balanced"`), and (2) as a **pin reset value** in `/router pin auto` (meaning "clear the manual pin"). They are completely separate concepts.
 
 ### Configuration Fields
 
 | Field | Type | Default      | Description                                                                                                                                                                                                                                                                                                                                                                                         |
 |---|---|--------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `debug` | `boolean` | `false`      | Enable debug mode. Equivalent to running `/router debug on` at startup.                                                                                                                                                                                                                                                                                                                             |
-| `defaultProfile` | `string` | `"auto"`     | The profile to activate by default when the router starts. Must match a key in `profiles`. See [Activating the Router](#activating-the-router) for how to make the router active on session start.                                                                                                                                                                                                  |
 | `classifierModels` | `string[]` | --           | Array of fast model refs (e.g. `["google/gemini-flash-latest"]`) used to classify user intent via LLM. Models are tried in order, providing fallback if one hits an error. When set, the classifier has final say on tier selection (gated by triggers below). Omit to use fast local heuristics only.                                                                                              |
 | `classifierModelThinking` | `ThinkingLevel` | `off` | Reasoning/thinking level for the classifier model calls. Defaults to `off` (no extended reasoning) to keep calls fast and cheap.                                                                                                                                                                                                                                                                    |
 | `classifierRunOnceAfterToolCount` | `number` | `3` | Run the classifier once after this many tool continuations. Default: 3. Set to 0 to disable.                                                                                                                                                                                                                                                                                                        |
@@ -168,7 +150,7 @@ Each profile defines three **tiers** (`high`, `medium`, `low`). Each tier config
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `model` | `string` | _(required)_ | Canonical model ref in `"provider/model"` format (e.g. `"openai/gpt-5.4-pro"`). |
-| `thinking` | `ThinkingLevel` | -- | **Optional.** Reasoning/thinking level for this tier. Override per-turn via `/router thinking`. |
+| `thinking` | `ThinkingLevel` | -- | **Optional.** Reasoning/thinking level for this tier. |
 | `fallbacks` | `string[]` | -- | **Optional.** Ordered list of fallback model refs. If the primary model fails, the router retries each fallback in sequence before surfacing an error. |
 
 **Valid thinking levels** (from least to most reasoning): `off`, `minimal`, `low`, `medium`, `high`, `xhigh`
@@ -231,7 +213,7 @@ When you define profiles in your config, each profile is registered as a model w
 To have the router activate automatically every time pi starts:
 
 1. Add the router model(s) to pi's **scoped models list** in your pi configuration (e.g., add `"router/balanced"`).
-2. Set `"defaultProfile": "balanced"` in `model-router.json` so the router knows which profile to use.
+2. When pi starts with a router model in scope, the router activates using the profile name embedded in the model ID (e.g., `router/balanced` activates the `balanced` profile).
 
 ### 2. Runtime activation (current session only)
 
@@ -245,7 +227,7 @@ All commands are accessible via `/router` in the pi chat interface. **Tab-comple
 
 ### `/router status`
 
-Show the current router status: enabled/disabled state, active profile and its pin, thinking overrides, widget on/off, tier stickiness, last routing decision, debug mode, and history count.
+Show the current router status: enabled/disabled state, active profile and its pin, tier stickiness, last routing decision, debug mode, and history count.
 
 ```
 /router
@@ -263,45 +245,22 @@ Switch to a different router profile. This automatically enables the router if i
 
 If you call `/router` with a profile name directly (e.g. `/router balanced`), it also works as a shortcut.
 
-### `/router pin [profile] <tier|auto>`
+### `/router pin [profile] <tier|clear>`
 
 Force a specific tier for a profile, overriding all automatic routing decisions. **Pins are persisted in session state (branch-safe) but do NOT modify your config file.**
 
 ```bash
 /router pin high           # Pin current profile to 'high' tier
-/router pin auto           # Clear pin on current profile
+/router pin clear          # Clear pin on current profile
 /router pin cheap low      # Pin the 'cheap' profile to 'low' tier
 /router pin                # Show current pin status
 ```
 
-Valid pin values: `high`, `medium`, `low`, `auto`.
+Valid pin values: `high`, `medium`, `low`, `clear`.
 
-> **Note:** `auto` is **not** a tier. For `/router pin`, `auto` means "clear the manual pin and return this profile to automatic routing." With one arg (`/router pin auto`) it always operates on the **current** profile. With two args, the first is always a **profile name** -- so `/router pin auto auto` would clear the pin on a profile named `"auto"`.
+> **Note:** `clear` removes the pin and returns the profile to automatic routing.
 
-### `/router thinking [profile] [tier] <level|auto>`
 
-Override the thinking/reasoning level for a specific tier or profile. Overrides the `thinking` value in the config.
-
-```bash
-/router thinking xhigh              # Set thinking for current tier
-/router thinking high low           # Set 'high' tier thinking to 'low'
-/router thinking balanced low off   # Set 'balanced' profile's 'low' tier to 'off'
-/router thinking balanced all high  # Set all tiers in 'balanced' profile to 'high'
-/router thinking                    # Show current thinking overrides
-```
-
-Valid thinking levels: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `auto`.
-
-Special tier value `all` applies the override to all three real tiers at once.
-
-### `/router fix <tier>`
-
-Correct the **last routing decision** and pin that tier for the profile that was used in that decision. If you've since switched profiles, the pin applies to the profile from the last decision, not the currently selected one.
-
-```bash
-/router fix high
-/router fix low
-```
 
 ### `/router debug <on|off|show|clear>`
 
@@ -315,16 +274,6 @@ Control turn-by-turn routing debug notifications and history. Debug history stor
 /router debug          # Toggle
 ```
 
-### `/router widget <on|off|toggle>`
-
-Toggle the persistent status **widget** in the pi TUI sidebar/status area.
-
-```bash
-/router widget on
-/router widget off
-/router widget         # Toggle
-```
-
 ### `/router disable`
 
 Disable the router and restore the **last used non-router model**.
@@ -332,6 +281,8 @@ Disable the router and restore the **last used non-router model**.
 ### `/router reload`
 
 **Hot-reload** the configuration from disk without restarting pi. Preserves debug state.
+
+If the active profile was removed from the config, the router becomes inactive until you switch to an available profile via `/router profile <name>`.
 
 ### `/router help`
 
@@ -382,6 +333,7 @@ EXECUTION
   - Auto-context truncation: trim oldest messages if target
      model's window is smaller than the profile's maximum window
   - Fallback chain: retry fallback models if primary fails
+  - Post-turn re-assert: re-select the router model after each turn if it was changed
 ```
 
 ### Heuristic Details
@@ -444,6 +396,8 @@ Each tier can define `fallbacks` -- an ordered list of alternative models. If th
 
 When a fallback is used, `decision.isFallback` is set to `true` and shown in the status. The tier's configured thinking level (or runtime override) applies to all fallback models -- if a fallback doesn't support the requested level, pi silently clamps it.
 
+If a model fails during a turn, the router retries it up to **2 times** before moving to the next fallback in the chain.
+
 ### Image-Aware Auto-Routing
 
 When the user attaches an image, the router checks whether the routed model supports image inputs. If not, it searches for another model in the same tier that does. If none are found, it escalates to higher tiers until a suitable model is found.
@@ -462,30 +416,32 @@ Estimated using a conservative heuristic: **4 characters = 1 token**.
 
 This is a rough last-resort cut, not a replacement for pi's built-in session compaction (`/compact`).
 
-### Thinking Control
-
-Full control over reasoning/thinking levels per tier and per profile, both statically (in config) and dynamically:
-
-- **Config level**: Set `thinking` per tier in each profile (e.g. `"thinking": "xhigh"`)
-- **Runtime override**: `/router thinking balanced high xhigh` overrides the `balanced` profile's `high` tier thinking to `xhigh`
-- **Reset to default**: `/router thinking balanced high auto` resets to the config value
-- **Tier shorthands**: `/router thinking xhigh` applies to the current tier's decision
-
-Levels: `off | minimal | low | medium | high | xhigh`
-
 ### Session & Debugging
 
-**Persistent State:** Router state persists across agent restarts AND conversation branches via `pi.appendEntry` with a custom `router-state` entry type. Pins, thinking overrides, debug mode, widget visibility, debug history, the last routing decision, and the last non-router model are all preserved. State is **branch-safe** -- different conversation branches maintain independent state using `sessionManager.getBranch()`.
+**Persistent State:** Router state persists across agent restarts AND conversation branches via `pi.appendEntry` with a custom `router-state` entry type. Pins, debug mode, debug history, the last routing decision, and the last non-router model are all preserved. State is **branch-safe** -- different conversation branches maintain independent state using `sessionManager.getBranch()`.
 
-**Status Widget:** `/router widget on` shows a live widget in the pi TUI sidebar:
+**Status Line:** The router shows its status in the pi TUI status bar:
 ```
 Router: enabled
 Profile: balanced (active)
-Pin: auto
+Pin: none
 Route: medium -> google/gemini-flash-latest
 ```
 
-**Debug History:** With `/router debug on`, every routing decision is logged with timestamps. View with `/router debug show`:
+The `Route:` line may show decision flags in brackets when applicable:
+- `[classifier]` — routed by the LLM classifier
+- `[rule]` — routed by a custom rule
+- `[fallback]` — a fallback model was used
+- `[context]` — context threshold triggered an upgrade
+
+**Debug History:** With `/router debug on`, routing decisions and classifier gating decisions are logged with timestamps. View with `/router debug show` to see the routing history:
+
+```
+RUN classifier — init(≥3), interval(%10) (cont:5)
+SKIP classifier (cont:2, fail:0)
+```
+
+The classifier gating notifications show why the classifier ran or was skipped (`cont` = tool-result continuations since the last user message, `fail` = consecutive recent tool failures).
 ```
 [10:32:15 AM] high -> openai/gpt-5.4-pro (high) - Detected planning from keywords.
 [10:33:42 AM] medium -> google/gemini-flash-latest (medium) - Detected implementation work.
@@ -500,7 +456,6 @@ Route: medium -> google/gemini-flash-latest
 
 ```json
 {
-  "defaultProfile": "balanced",
   "classifierModels": ["google/gemini-flash-latest"],
   "tierStickiness": 0.5,
   "defaultContextThresholdPercent": 70,
@@ -522,7 +477,6 @@ Route: medium -> google/gemini-flash-latest
 
 ```json
 {
-  "defaultProfile": "cheap",
   "tierStickiness": 0.3,
   "profiles": {
     "cheap": {
@@ -538,7 +492,6 @@ Route: medium -> google/gemini-flash-latest
 
 ```json
 {
-  "defaultProfile": "deep",
   "tierStickiness": 0.8,
   "profiles": {
     "deep": {
@@ -554,7 +507,6 @@ Route: medium -> google/gemini-flash-latest
 
 ```json
 {
-  "defaultProfile": "anthropic",
   "profiles": {
     "anthropic": {
       "high":   { "model": "anthropic/claude-3-5-sonnet-20241022", "thinking": "high" },

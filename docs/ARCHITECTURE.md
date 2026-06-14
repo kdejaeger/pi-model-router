@@ -1,6 +1,6 @@
 # Architecture: Pi Model Router Extension
 
-The `pi-model-router` registers a custom logical provider (`router`) that exposes "profiles" as models (e.g., `router/auto`). For every turn, the router selects an underlying concrete model based on task complexity, conversation context, and user-defined rules.
+The `pi-model-router` registers a custom logical provider (`router`) that exposes "profiles" as models (e.g., `router/balanced`). For every turn, the router selects an underlying concrete model based on task complexity, conversation context, and user-defined rules.
 
 > For the full decision-pipeline reference (heuristic details, context controls, fallback chains, image-aware escalation, Google thinking tool continuation, auto-context truncation, and thinking control), see [How Routing Works](../README.md#how-routing-works) in the README.
 
@@ -68,9 +68,7 @@ Router state is persisted using `pi.appendEntry` with a custom type `router-stat
 |---|---|---|
 | `selectedProfile` | `string` | Active profile name |
 | `pinnedTierByProfile` | `Record<string, TierLevel>` | Manual tier pins per profile |
-| `thinkingOverride` | `Record<string, Record<string, ThinkingLevel>>` | Runtime thinking overrides |
 | `debugEnabled` | `boolean` | Debug mode state |
-| `widgetEnabled` | `boolean` | Widget visibility |
 | `lastDecision` | `RoutingDecision` | Most recent routing decision |
 | `lastNonRouterModel` | `string` | Last model used before switching to router |
 | `debugHistory` | `RoutingDecision[]` | Recent routing decisions |
@@ -79,4 +77,4 @@ Router state is persisted using `pi.appendEntry` with a custom type `router-stat
 
 ### Debug History
 
-The debug history stores the last 12 routing decisions (`MAX_DEBUG_HISTORY` in `constants.ts`). When debug mode is enabled (`/router debug on`), each decision is appended to `debugHistory` and `/router debug show` prints the full history.
+The debug history stores the last 12 routing decisions. When debug mode is enabled (`/router debug on`), each decision is appended to `debugHistory` and `/router debug show` prints the full history.
