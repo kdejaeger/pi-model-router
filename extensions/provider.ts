@@ -212,10 +212,12 @@ export const registerRouterProvider = (
             lastDecision?.targetProvider === 'google' &&
             lastDecision?.thinking !== 'off';
           if (isGoogleContinuation) { // Google thinking lock — preserve exact model on tool-result continuations
+            const toolResultsCount = countToolResultsSinceLastUserPrompt(context);
             decision = {
               ...lastDecision!,
               timestamp: Date.now(),
               reasoning: `Preserved ${lastDecision!.targetLabel} for Google tool-result continuation.`,
+              lastClassifierRunToolCount: toolResultsCount,
             };
           } else {
             const heuristicAnalysis = makeHeuristicAnalysis(context, lastDecision, pinnedTier, currentConfig.tierStickiness, currentConfig.rules);
