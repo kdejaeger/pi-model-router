@@ -5,7 +5,6 @@
   "classifierRunOnceAfterToolCount": 3,
   "classifierRunAfterToolFailures": 2,
   "classifierInterval": 10,
-  "tierStickiness": 0.5,
   "defaultContextThresholdPercent": 70,
   "contextThresholdPercentOverrides": {
     "openrouter/deepseek/deepseek-v4-flash": 60,
@@ -14,14 +13,6 @@
     "openrouter/google/gemini-3-flash-preview": 80,
     "openrouter/openai/gpt-5.4-nano": 30
   },
-  "rules": [
-    {
-      "matches": ["deploy", "production", "release"],
-      "tier": "high",
-      "reason": "Safety check for production tasks"
-    },
-    { "matches": "changelog", "tier": "low" }
-  ],
   "profiles": {
     "auto": {
       "high": {

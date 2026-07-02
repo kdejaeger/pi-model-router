@@ -11,7 +11,7 @@ import {
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { RouterConfig, RouterPinByProfile, RouterTier, RoutingDecision } from './types';
 import { createOpenRouterOnPayload, OPENROUTER_ATTR_HEADERS, parseCanonicalModelRef, profileNames, resolveModelFromRef, ROUTER_TIERS } from './config';
-import { buildRoutingDecision, countToolResultsSinceLastUserPrompt, decisionsMatch, extractTextFromContent, makeHeuristicAnalysis, runClassifier, shouldRunClassifier } from './routing';
+import { buildRoutingDecision, countToolResultsSinceLastUserPrompt, extractTextFromContent, runClassifier, shouldRunClassifier } from './routing';
 import { formatDecision } from './ui';
 
 const createErrorMessage = (model: Model<Api>, message: string): AssistantMessage => {
@@ -35,10 +35,7 @@ const createErrorMessage = (model: Model<Api>, message: string): AssistantMessag
   };
 };
 
-/**
- * Heuristic token estimator aligned with pi's built-in compaction heuristic:
- * 1 token ~= 4 characters. This is conservative and matches the core compaction path.
- */
+/** Token estimator: 1 token ~= 4 characters. Conservative and matches pi's compaction path. */
 const estimateTokens = (text: string): number => Math.ceil(text.length / 4);
 
 /**
@@ -54,15 +51,12 @@ const truncateContext = (context: Context, limit: number): Context => {
   if (totalTokens <= limit) return context;
 
   const latestMessage = messages.pop()!;
+  const latestTokens = estimateTokens(extractTextFromContent(latestMessage.content));
 
-  // Remove oldest until it fits
-  while (messages.length > 0) {
-    const currentTokens =
-      systemTokens +
-      estimateTokens(extractTextFromContent(latestMessage.content)) +
-      messages.reduce((sum, m) => sum + estimateTokens(extractTextFromContent(m.content)), 0);
-    if (currentTokens <= limit) break;
-    messages.shift();
+  let runningTotal = systemTokens + latestTokens + messages.reduce((sum, m) => sum + estimateTokens(extractTextFromContent(m.content)), 0);
+  while (messages.length > 0 && runningTotal > limit) {
+    const shifted = messages.shift()!;
+    runningTotal -= estimateTokens(extractTextFromContent(shifted.content));
   }
 
   return { ...context, messages: [...messages, latestMessage] };
@@ -74,13 +68,6 @@ const hasRecentImage = (context: Context): boolean => {
   // and assistant messages with images - without firing on stale images from many turns ago.
   const recentMessages = context.messages.slice(-6);
   return recentMessages.some((msg) => Array.isArray(msg.content) && msg.content.some((part) => part.type === 'image'));
-};
-
-const checkModelSupportsImage = (
-  modelRef: string,
-  modelRegistry: ExtensionContext['modelRegistry'] | undefined,
-): boolean => {
-  return resolveModelFromRef(modelRef, modelRegistry)?.input?.includes('image') ?? false;
 };
 
 export const registerRouterProvider = (
@@ -107,9 +94,8 @@ export const registerRouterProvider = (
   // Map profiles to their capacities
   const models = profileNames(currentConfig).map((name) => {
     const profile = currentConfig.profiles[name];
-    let maxContextWindow = 1_000_000;
-    let maxOutputTokens = 120_000;
-    let highestContextWindowFound = 0;
+    let maxContextWindow = 0;
+    let maxOutputTokens = 0;
 
     if (state.currentModelRegistry) {
       for (const tier of ROUTER_TIERS) {
@@ -120,8 +106,7 @@ export const registerRouterProvider = (
           const model = resolveModelFromRef(modelRef, state.currentModelRegistry);
           if (model) {
             const currentContextWindow = model.contextWindow ?? 0;
-            if (currentContextWindow > highestContextWindowFound) {
-              highestContextWindowFound = currentContextWindow;
+            if (currentContextWindow > maxContextWindow) {
               maxContextWindow = currentContextWindow;
               maxOutputTokens = model.maxTokens ?? 120_000;
             }
@@ -129,6 +114,9 @@ export const registerRouterProvider = (
         }
       }
     }
+
+    if (maxContextWindow === 0) maxContextWindow = 1_000_000;
+    if (maxOutputTokens === 0) maxOutputTokens = 120_000;
 
     const profileSupportsReasoning = state.currentModelRegistry
       ? ROUTER_TIERS.some((tier) => {
@@ -206,6 +194,8 @@ export const registerRouterProvider = (
 
           let decision: RoutingDecision;
 
+          let bShouldRunClassifier = false;
+
           const isGoogleContinuation =
             lastMsgWasTool &&
             lastDecision?.profile === model.id &&
@@ -220,37 +210,39 @@ export const registerRouterProvider = (
               lastClassifierRunToolCount: toolResultsCount,
             };
           } else {
-            const heuristicAnalysis = makeHeuristicAnalysis(context, lastDecision, pinnedTier, currentConfig.tierStickiness, currentConfig.rules);
-
-            let resolvedTier: RouterTier = heuristicAnalysis.suggestedTier;
-            let resolvedReasoning: string = `Heuristic: ${heuristicAnalysis.reasoning}`;
+            let resolvedTier: RouterTier;
+            let resolvedReasoning: string;
             let lastClassifierRunToolCount = lastDecision?.lastClassifierRunToolCount;
 
             if (currentConfig.classifierModels?.length && !pinnedTier) {
               const toolResultsCount = countToolResultsSinceLastUserPrompt(context);
 
-              const shouldRunTheClassifier = shouldRunClassifier(currentConfig, context, lastDecision, lastMsgWasTool, toolResultsCount, state.debugEnabled, ctx);
-              const classifierResult = shouldRunTheClassifier
-                ? await runClassifier(currentConfig, modelRegistry, context, lastDecision, heuristicAnalysis, ctx, state.debugEnabled)
+              bShouldRunClassifier = shouldRunClassifier(currentConfig, context, lastDecision, lastMsgWasTool, toolResultsCount, state.debugEnabled, ctx);
+              const classifierResult = bShouldRunClassifier
+                ? await runClassifier(currentConfig, modelRegistry, context, lastDecision, ctx, state.debugEnabled)
                 : null;
 
-              if (classifierResult) { // Use the result from the fresh classifier run
+              if (classifierResult) {
                 resolvedTier = classifierResult.tier;
                 resolvedReasoning = `Classifier: ${classifierResult.reasoning}`;
                 lastClassifierRunToolCount = toolResultsCount;
+              } else if (lastDecision) {
+                // Classifier skipped or failed — reuse previous decision
+                resolvedTier = lastDecision.tier;
+                resolvedReasoning = lastDecision.reasoning;
               } else {
-                if (shouldRunTheClassifier && state.debugEnabled && ctx) {
-                  ctx.ui.notify('Classifier returned no result', 'warning');
-                }
-                if (lastDecision?.reasoning.startsWith('Classifier:')) { // If classifier failed or was skipped, reuse the previous classifier's decision
-                  resolvedTier = lastDecision.tier;
-                  resolvedReasoning = lastDecision.reasoning;
-                }
+                resolvedTier = 'medium';
+                resolvedReasoning = 'No classifier result yet, defaulting to medium.';
               }
+            } else if (pinnedTier) {
+              resolvedTier = pinnedTier;
+              resolvedReasoning = `Pinned to ${pinnedTier} tier.`;
+            } else {
+              resolvedTier = 'medium';
+              resolvedReasoning = 'No classifier configured, defaulting to medium.';
             }
 
             decision = buildRoutingDecision(model.id, profile, resolvedTier, resolvedReasoning, lastClassifierRunToolCount);
-            decision.isHeuristicRuleMatched = heuristicAnalysis.isRuleMatched;
           }
 
           let tokensUsed = 0;
@@ -258,7 +250,7 @@ export const registerRouterProvider = (
             const contextUsage = await ctx?.getContextUsage();
             tokensUsed = contextUsage?.tokens ?? 0;
           } catch {
-            ctx?.ui.notify('Unable to get context usage (and determine tokens used) from pi', 'warning');
+            ctx?.ui.notify('Could not read current context size from pi.', 'warning');
           }
 
           const detectedImageInRecentContext = hasRecentImage(context);
@@ -287,7 +279,7 @@ export const registerRouterProvider = (
 
               for (const modelRef of modelsInTier) {
                 if (triedModels.has(modelRef)) continue;
-                if (detectedImageInRecentContext && !checkModelSupportsImage(modelRef, modelRegistry)) {
+                if (detectedImageInRecentContext && !resolveModelFromRef(modelRef, modelRegistry)?.input?.includes('image')) {
                   failureReasons.push(`${modelRef} does not support images`);
                   continue;
                 }
@@ -299,7 +291,7 @@ export const registerRouterProvider = (
                 }
 
                 if (targetModel.contextWindow === undefined || targetModel.contextWindow === 0) {
-                  ctx?.ui.notify(`Router warning: model ${modelRef} has no contextWindow in registry`, 'warning');
+                  ctx?.ui.notify(`Router warning: model ${modelRef} has no known context size`, 'warning');
                 }
 
                 const thresholdPercent =
@@ -331,80 +323,71 @@ export const registerRouterProvider = (
                   } else {
                     decision.reasoning += triggerReasons ? ` (Using ${modelRef} for ${triggerReasons})` : '';
                   }
-
-                  decision.targetProvider = targetProvider;
-                  decision.targetModelId = targetModelId;
-                  decision.targetLabel = modelRef;
-                  decision.isFallback = !tierConfig || modelRef !== tierConfig.model;
-                  decision.isContextTriggered = !fitsContext;
                 }
+                decision.targetProvider = targetProvider;
+                decision.targetModelId = targetModelId;
+                decision.targetLabel = modelRef;
+                decision.isFallback = !tierConfig || modelRef !== tierConfig.model;
+                decision.isContextTriggered = !fitsContext;
 
                 if (ctx) {
-                  if (state.debugEnabled && !decisionsMatch(state.lastDecision, decision)) {
+                  if (state.debugEnabled && bShouldRunClassifier) {
                     ctx.ui.notify(`Decision ${formatDecision(decision)}`, 'info');
                   }
                   actions.updateStatus(ctx);
                 }
 
                 const auth = await modelRegistry.getApiKeyAndHeaders(targetModel);
-                if (!auth.ok || !auth.apiKey) {
-                  const reason = auth.ok
-                    ? `No API key for model: ${modelRef}`
-                    : `Auth failed for model: ${modelRef}: ${auth.error}`;
+                if (!auth.ok) {
+                  const reason = `Auth failed for model: ${modelRef}: ${auth.error}`;
                   lastError = new Error(reason);
                   failureReasons.push(`${modelRef} auth failed: ${reason}`);
                   continue;
                 }
+                // Note: auth.apiKey may be undefined for env-var-based providers
+                // (e.g., OPENROUTER_API_KEY). The compat streamSimple resolves
+                // env vars independently, so we pass auth.apiKey as-is to let the
+                // compat layer handle the fallback.
 
-                // Try delegation
+                let effectiveContext = context;
+                if (!fitsContext) {
+                  effectiveContext = truncateContext(context, targetContextLimit);
+                  ctx?.ui.notify(`Memory too large for ${modelRef} — trimmed ${context.messages.length - effectiveContext.messages.length} messages. Run /compact to reduce context size.`, 'warning');
+                }
+
+                // Attention: stripping reasoning from pi's incoming options so it doesn't leak into ...baseOptions. The router controls this via delegatedReasoning below.
+                const { onPayload, headers: originalHeaders, reasoning: _incomingReasoning, ...baseOptions } = options ?? {};
+
+                const effectiveHeaders: Record<string, string> = {
+                  ...(originalHeaders as Record<string, string> | undefined),
+                  ...(auth.headers ?? {}),
+                  ...(targetProvider === 'openrouter' ? OPENROUTER_ATTR_HEADERS : {}),
+                };
+
+                const delegatedReasoning = targetModel.reasoning && decision.thinking !== 'off' ? decision.thinking : undefined;
+                pi.setThinkingLevel(delegatedReasoning ?? 'off');
+
+                const effectiveOptions: SimpleStreamOptions = {
+                  ...baseOptions,
+                  apiKey: auth.apiKey,
+                  headers: effectiveHeaders,
+                  ...(delegatedReasoning ? { reasoning: delegatedReasoning } : {}),
+                };
+
+                if (targetProvider === 'openrouter') {
+                  effectiveOptions.onPayload = createOpenRouterOnPayload(ctx?.sessionManager, onPayload) ?? onPayload;
+                } else if (onPayload) {
+                  effectiveOptions.onPayload = onPayload;
+                }
+
                 const MAX_ATTEMPTS_PER_MODEL = 2;
                 for (let attempt = 1; attempt <= MAX_ATTEMPTS_PER_MODEL; attempt++) {
                   try {
-                    const delegatedReasoning =
-                      targetModel.reasoning && decision.thinking !== 'off'
-                        ? decision.thinking
-                        : undefined;
-                    pi.setThinkingLevel(delegatedReasoning ?? 'off');
-
-                    let effectiveContext = context;
-                    if (!fitsContext) {
-                      ctx?.ui.notify(`Context too large for ${modelRef} (${thresholdPercent}% of ${targetContextWindow}). Truncating now. Run /compact to avoid context loss.`, 'warning',);
-                      effectiveContext = truncateContext(context, targetContextLimit);
-                    }
-
-                    // Strip pi's reasoning from options — the router controls thinking.
-                    const { onPayload: origOnPayload, headers: originalHeaders, ...delegationOptions } = options ?? {};
-
-                    // Build effective headers: request headers → provider headers → OpenRouter attribution
-                    const effectiveHeaders: Record<string, string> = {
-                      ...(originalHeaders as Record<string, string> | undefined),
-                      ...(auth.headers ?? {}),
-                    };
-
-                    if (targetProvider === 'openrouter') {
-                      Object.assign(effectiveHeaders, OPENROUTER_ATTR_HEADERS);
-                    }
-
-                    const effectiveOptions: Record<string, unknown> = {
-                      ...delegationOptions,
-                      apiKey: auth.apiKey,
-                      headers: effectiveHeaders,
-                      ...(delegatedReasoning ? { reasoning: delegatedReasoning } : {})
-                    };
-
-                    if (targetProvider === 'openrouter') {
-                      const onPayload = createOpenRouterOnPayload(ctx?.sessionManager, origOnPayload);
-                      if (onPayload) effectiveOptions.onPayload = onPayload;
-                    } else if (origOnPayload) {
-                      effectiveOptions.onPayload = origOnPayload;
-                    }
-
                     const delegatedStream = streamSimple(targetModel, effectiveContext, effectiveOptions);
-
                     let contentReceived = false;
                     for await (const event of delegatedStream) {
                       if (event.type === 'error' && !contentReceived) {
-                        throw new Error(((event as { error?: AssistantMessage }).error?.errorMessage) || 'Model failed before sending content.');
+                        throw new Error(event.error.errorMessage || 'Model failed before sending content.');
                       }
                       if (
                         event.type === 'text_delta' ||
@@ -423,10 +406,7 @@ export const registerRouterProvider = (
                     lastError = err;
                     const remaining = MAX_ATTEMPTS_PER_MODEL - attempt;
                     const retryMsg = remaining > 0 ? ` — ${remaining} ${remaining === 1 ? 'retry' : 'retries'} left` : '';
-                    ctx?.ui.notify(
-                      `Failed to delegate to model ${modelRef} (attempt ${attempt}/${MAX_ATTEMPTS_PER_MODEL}): ${err}${retryMsg}`,
-                      'warning',
-                    );
+                    ctx?.ui.notify(`Failed to reach model ${modelRef} (attempt ${attempt}/${MAX_ATTEMPTS_PER_MODEL}): ${err}${retryMsg}`, 'warning');
                   }
                 }
               }
@@ -436,9 +416,9 @@ export const registerRouterProvider = (
           actions.recordDebugDecision(decision);
 
           if (!success) {
-            throw lastError || new Error(
-              `Failed to delegate to any model in the chain.${failureReasons.length > 0 ? ' Reasons: ' + failureReasons.filter(Boolean).join('; ') + '.' : ''}`,
-            );
+            const errorMsg = `Failed to delegate to any model in the chain.${failureReasons.length > 0 ? ' Reasons: ' + failureReasons.filter(Boolean).join('; ') + '.' : ''}`;
+            const combined = lastError ? new Error(`${(lastError as Error).message} — ${errorMsg}`) : new Error(errorMsg);
+            throw combined;
           }
 
           stream.end();

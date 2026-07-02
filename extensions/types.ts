@@ -2,11 +2,6 @@ import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
 
 export type RouterTier = 'high' | 'medium' | 'low';
 export type RouterPinByProfile = Partial<Record<string, RouterTier>>;
-export interface RoutingRule {
-  matches: string | string[];
-  tier: RouterTier;
-  reason?: string;
-}
 
 export interface RoutedTierConfig {
   model: string;
@@ -30,10 +25,8 @@ export interface RouterConfig {
   classifierRunAfterToolFailures?: number;
   /** Run the classifier every Nth tool continuation during long chains. Default: 10. */
   classifierInterval?: number;
-  tierStickiness?: number;
   defaultContextThresholdPercent?: number;
   contextThresholdPercentOverrides?: Record<string, number>;
-  rules?: RoutingRule[];
   profiles: Record<string, RouterProfile>;
 }
 
@@ -48,15 +41,8 @@ export interface RoutingDecision {
   timestamp: number;
   isFallback?: boolean;
   isContextTriggered?: boolean;
-  isHeuristicRuleMatched?: boolean;
   /** Tool-continuation count when the classifier last ran */
   lastClassifierRunToolCount?: number;
-}
-
-export interface HeuristicAnalysis {
-  suggestedTier: RouterTier;
-  reasoning: string;
-  isRuleMatched: boolean;
 }
 
 export interface RouterPersistedState {

@@ -10,12 +10,11 @@ import type {
   ConfigLoadResult,
   ParsedConfigFile,
   RouterTier,
-  RoutingRule,
 } from './types';
 
 export const ROUTER_TIERS = ['high', 'medium', 'low'] as const;
 
-export const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];  
 export const ROUTER_PIN_VALUES = ['clear', 'high', 'medium', 'low'] as const;
 
 const isObjectRecord = (
@@ -25,9 +24,6 @@ const isObjectRecord = (
 
 const isThinkingLevel = (value: unknown): value is ThinkingLevel =>
   typeof value === 'string' && THINKING_LEVELS.includes(value as ThinkingLevel);
-
-export const isRouterTier = (value: unknown): value is RouterTier =>
-  value === 'high' || value === 'medium' || value === 'low';
 
 /**
  * Returns true if value is a valid pin value.
@@ -104,12 +100,10 @@ const mergeConfig = (
       override.classifierRunAfterToolFailures ?? base.classifierRunAfterToolFailures,
     classifierInterval:
       override.classifierInterval ?? base.classifierInterval,
-    tierStickiness: override.tierStickiness ?? base.tierStickiness,
     defaultContextThresholdPercent:
       override.defaultContextThresholdPercent ?? base.defaultContextThresholdPercent,
     contextThresholdPercentOverrides:
       override.contextThresholdPercentOverrides ?? base.contextThresholdPercentOverrides,
-    rules: override.rules ?? base.rules,
     profiles: mergedProfiles,
   };
 };
@@ -206,7 +200,7 @@ const normalizeTierConfig = (
   return { model, thinking, fallbacks };
 };
 
-export const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
+const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
   const warnings: string[] = [];
   const normalizedProfiles: Record<string, RouterProfile> = {};
 
@@ -244,6 +238,24 @@ export const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
       );
       continue;
     }
+    if (!high) {
+      warnings.push(
+        `Profile "${trimmedName}" is missing the "high" tier. All three tiers (high, medium, low) are required. Skipped.`,
+      );
+      continue;
+    }
+    if (!medium) {
+      warnings.push(
+        `Profile "${trimmedName}" is missing the "medium" tier. All three tiers (high, medium, low) are required. Skipped.`,
+      );
+      continue;
+    }
+    if (!low) {
+      warnings.push(
+        `Profile "${trimmedName}" is missing the "low" tier. All three tiers (high, medium, low) are required. Skipped.`,
+      );
+      continue;
+    }
 
     normalizedProfiles[trimmedName] = { high, medium, low };
   }
@@ -251,11 +263,6 @@ export const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
   if (Object.keys(normalizedProfiles).length === 0) {
     warnings.push('No router profiles configured. Define at least one profile in your config.');
   }
-
-  const tierStickiness =
-    typeof raw.tierStickiness === 'number'
-      ? Math.max(0, Math.min(1, raw.tierStickiness))
-      : 0.5;
 
   let defaultContextThresholdPercent = 90;
   if (typeof raw.defaultContextThresholdPercent === 'number') {
@@ -291,30 +298,6 @@ export const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
         }),
       )
     : undefined;
-
-  const rules: RoutingRule[] = [];
-  if (Array.isArray(raw.rules)) {
-    for (const rule of raw.rules) {
-      if (isObjectRecord(rule)) {
-        const matches = rule.matches;
-        const tier = rule.tier;
-        if (
-          (typeof matches === 'string' || Array.isArray(matches)) &&
-          isRouterTier(tier)
-        ) {
-          rules.push({
-            matches,
-            tier,
-            reason: typeof rule.reason === 'string' ? rule.reason : undefined,
-          });
-        } else {
-          warnings.push(
-            `Ignored invalid routing rule: ${JSON.stringify(rule)}`,
-          );
-        }
-      }
-    }
-  }
 
   let classifierModels: string[] | undefined = undefined;
   if (Array.isArray(raw.classifierModels)) {
@@ -357,10 +340,8 @@ export const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
       classifierRunOnceAfterToolCount,
       classifierRunAfterToolFailures,
       classifierInterval,
-      tierStickiness,
       defaultContextThresholdPercent,
       contextThresholdPercentOverrides,
-      rules: rules.length > 0 ? rules : undefined,
       profiles: normalizedProfiles,
     },
     warnings,

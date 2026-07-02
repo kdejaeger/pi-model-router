@@ -6,11 +6,6 @@ import type {
 
 const getDecisionFlags = (decision: RoutingDecision): string[] => {
   const flags: string[] = [];
-  if (decision.reasoning.startsWith('Classifier:')) {
-    flags.push('classifier');
-  } else if (decision.isHeuristicRuleMatched) {
-    flags.push('rule');
-  }
   if (decision.isFallback) flags.push('fallback');
   if (decision.isContextTriggered) flags.push('context');
   return flags;

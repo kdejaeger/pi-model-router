@@ -1,8 +1,8 @@
 # Architecture: Pi Model Router Extension
 
-The `pi-model-router` registers a custom logical provider (`router`) that exposes "profiles" as models (e.g., `router/balanced`). For every turn, the router selects an underlying concrete model based on task complexity, conversation context, and user-defined rules.
+The `pi-model-router` registers a custom logical provider (`router`) that exposes "profiles" as models (e.g., `router/balanced`). For every turn, the router selects an underlying concrete model based on task complexity and conversation context.
 
-> For the full decision-pipeline reference (heuristic details, context controls, fallback chains, image-aware escalation, Google thinking tool continuation, auto-context truncation, and thinking control), see [How Routing Works](../README.md#how-routing-works) in the README.
+> For the full decision-pipeline reference (context controls, fallback chains, image-aware escalation, Google thinking tool continuation, auto-context truncation, and thinking control), see [How Routing Works](../README.md#how-routing-works) in the README.
 
 ## Module Architecture
 
@@ -10,7 +10,7 @@ The extension is modularized for maintainability:
 
 - **`extensions/index.ts`**: Orchestrator. Manages state, hooks into `pi` events, and wires modules together.
 - **`extensions/provider.ts`**: Implements the `router` provider and the delegation/retry loop.
-- **`extensions/routing.ts`**: Core decision logic, heuristics, and the LLM classifier.
+- **`extensions/routing.ts`**: Core decision logic, classifier, and gating.
 - **`extensions/config.ts`**: Loads, merges, and normalizes the JSON configuration.
 - **`extensions/commands.ts`**: Registers all `/router` subcommands and their autocompletions.
 - **`extensions/ui.ts`**: Manages the status line and the optional state widget.
@@ -27,18 +27,13 @@ session_start / model_select / turn_end (index.ts)
       provider.ts streamSimple
             │
             ├─→ Google lock → preserve exact model for tool continuation
-            ├─→ routing.ts (makeHeuristicAnalysis)
-            │      Always runs: heuristic analysis (keywords, word count,
-            │      tool count, tier-stickiness thresholds, rules,
-            │      manual pin, context trigger → HeuristicAnalysis)
-            │
+            ├─→ routing.ts
             ├─→ Classifier gating (only when classifierModels configured):
             │     ├─ New user message? → run classifier (final say)
             │     ├─ Tool cont ≥ confInitN (first crossing)? → run once
             │     ├─ Consecutive failures ≥ confFailN? → run (crisis)
             │     ├─ Cont crosses new interval bucket? → run (periodic)
             │     └─ Otherwise → reuse previous decision
-            │     heuristicAnalysis is advisory to the classifier
             │
             ├─→ Post-route corrections (image escalation)
             ├─→ Auto-context truncation

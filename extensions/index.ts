@@ -121,11 +121,7 @@ const routerExtension = (pi: ExtensionAPI) => {
         return;
       }
 
-      // The active router model's profile no longer exists in config
-      ctx.ui.notify(
-        `Router profile "${ctx.model.id}" is no longer configured.`,
-        'warning',
-      );
+      ctx.ui.notify(`Router profile "${ctx.model.id}" is no longer configured.`, 'warning');
       routerEnabled = false;
       selectedProfile = undefined;
     },

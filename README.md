@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/@kdejaeger/pi-model-router)](https://www.npmjs.com/package/@kdejaeger/pi-model-router)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Intelligent per-turn model router extension** (forked from [yeliu84/pi-model-router](https://github.com/yeliu84/pi-model-router)) for the [pi-coding-agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent). Automatically selects between high, medium, and low-tier LLMs on every turn based on task intent, context size, and custom rules -- with automatic fallbacks, image-aware rerouting, context truncation, and phase awareness.
+**Intelligent per-turn model router extension** (forked from [yeliu84/pi-model-router](https://github.com/yeliu84/pi-model-router)) for the [pi-coding-agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent). Automatically selects between high, medium, and low-tier LLMs on every turn based on task intent and context size — with automatic fallbacks, image-aware rerouting, context truncation, and classifier-based tier selection.
 
 > Think of it as an automatic transmission for your LLM -- it shifts gears up or down depending on what you're doing, so you never waste compute on a trivial task or run out of reasoning power on a complex one.
 
@@ -25,19 +25,14 @@
 
 ## How It Works
 
-The pi-model-router registers itself as a **custom logical provider** called `router` via `pi.registerProvider`. It exposes each of your profiles as a stable model (e.g., `router/balanced`, `router/cheap`, `router/deep`). **The model shown in your pi footer stays fixed**, while the underlying LLM changes transparently on every turn based on what you're asking.
+The pi-model-router registers itself as a **custom logical provider** (`router`) via `pi.registerProvider`. Each profile becomes a stable model (e.g., `router/balanced`). **The model shown in your footer stays fixed** while the underlying LLM changes per turn based on task complexity:
 
 ```
-  pi footer shows: router/balanced
+  footer shows: router/balanced
 
-  Turn 1: "Plan the architecture"
-    -> router routes to openai/gpt-5.4-pro (high)
-
-  Turn 2: "Fix the typo in line 42"
-    -> router routes to openai/gpt-5.4-nano (low)
-
-  Turn 3: "Implement the API handlers"
-    -> router routes to google/gemini-flash (med)
+  Turn 1: "Plan the architecture for the new API" → openai/gpt-5.4-pro       (high)
+  Turn 2: "Yes, go ahead"                  → openai/gpt-5.4-pro       (high)
+  Turn 3: "Implement the API handlers"     → google/gemini-flash      (med)
 ```
 
 ---
@@ -134,13 +129,11 @@ Project config values override global values, which override built-in defaults. 
 | `debug` | `boolean` | `false`      | Enable debug mode. Equivalent to running `/router debug on` at startup.                                                                                                                                                                                                                                                                                                                             |
 | `classifierModels` | `string[]` | --           | Array of fast model refs (e.g. `["google/gemini-flash-latest"]`) used to classify user intent via LLM. Models are tried in order, providing fallback if one hits an error. When set, the classifier has final say on tier selection (gated by triggers below). Omit to use fast local heuristics only.                                                                                              |
 | `classifierModelThinking` | `ThinkingLevel` | `off` | Reasoning/thinking level for the classifier model calls. Defaults to `off` (no extended reasoning) to keep calls fast and cheap.                                                                                                                                                                                                                                                                    |
-| `classifierRunOnceAfterToolCount` | `number` | `3` | Run the classifier once after this many tool continuations. Default: 3. Set to 0 to disable.                                                                                                                                                                                                                                                                                                        |
-| `classifierRunAfterToolFailures` | `number` | `2` | Run the classifier after this many consecutive tool failures (counting from the tail). Default: 2.                                                                                                                                                                                                                                                                                                  |
-| `classifierInterval` | `number` | `10` | Run the classifier every N tool continuations as a periodic re-check. Default: 10. Set to 0 to disable.                                                                                                                                                                                                                                                                                             |
-| `tierStickiness` | `number` (0.0-1.0) | `0.5`        | Stickiness of the current routing phase. Higher values keep the router in the same tier longer during multi-turn conversations.                                                                                                                                                                                                                                                                     |
+| `classifierRunOnceAfterToolCount` | `number` | `3` | Run the classifier once after this many tool continuations (only after the first user message of a turn). Default: 3. Set to 0 to disable.                                                                                                                                                                                                                                                                                                        |
+| `classifierRunAfterToolFailures` | `number` | `2` | Run the classifier after this many consecutive tool failures (counting from the tail of the current turn). Default: 2.                                                                                                                                                                                                                                                                                                  |
+| `classifierInterval` | `number` | `10` | Run the classifier every N tool continuations as a periodic re-check (compares crossed interval buckets). Default: 10. Set to 0 to disable.                                                                                                                                                                                                                                                                                             |
 | `defaultContextThresholdPercent` | `number` | `90`         | Default percentage threshold of a model's context window. If session context usage exceeds this percentage, the router searches for a suitable model in the current or higher tiers.                                                                                                                                                                                                                |
-| `contextThresholdPercentOverrides` | `Record<string, number>` | -- | **Optional.** Per-model context threshold overrides. Keys are canonical model refs in `"provider/model"` format. Values are the percentage of that model's context window that triggers an upgrade search. These take precedence over `defaultContextThresholdPercent`. Keys that do not match known models cause a startup error. See [Context Threshold Overrides](#context-threshold-overrides). |
-| `rules` | `array` | --           | **Optional.** List of keyword-based routing rules (see [Custom Rules](#custom-rules)).                                                                                                                                                                                                                                                                                                              |
+| `contextThresholdPercentOverrides` | `Record<string, number>` | -- | **Optional.** Per-model context threshold overrides. Keys are canonical model refs in `"provider/model"` format. Values are the percentage of that model's context window that triggers an upgrade search. These take precedence over `defaultContextThresholdPercent`. Unknown keys produce a warning on provider registration. See [Context Threshold Overrides](#context-threshold-overrides). |
 | `profiles` | `object` | _(required)_ | Map of profile definitions.                                                                                                                                                                                                                                                                                                                                                                         |
 
 ### Profile Definitions
@@ -170,26 +163,7 @@ Use `contextThresholdPercentOverrides` to tune the context threshold for specifi
 }
 ```
 
-### Custom Rules
 
-Rules let you pin a tier based on keywords in the user's prompt. They are checked **before** heuristics and the LLM classifier.
-
-```json
-{
-  "rules": [
-    { "matches": ["deploy", "production", "release"], "tier": "high", "reason": "Safety check for production tasks" },
-    { "matches": "changelog", "tier": "low" }
-  ]
-}
-```
-
-> **No default rules.** The router ships with zero built-in rules. You must add rules explicitly if you want keyword-based overrides.
-
-| Field | Type | Description |
-|---|---|---|
-| `matches` | `string \| string[]` | Keyword(s) to match against the user's prompt. If any match, the rule activates. |
-| `tier` | `"high" \| "medium" \| "low"` | The tier to route to when this rule matches. |
-| `reason` | `string` | **Optional.** Description shown in routing logs explaining why the rule fired. |
 
 ### Config Validation
 
@@ -197,10 +171,9 @@ The config system performs thorough validation on reload/startup and surfaces wa
 
 - Validates all profile model refs are in `provider/model` format
 - Validates thinking levels against allowed values
-- Validates routing rule format
 - Reports missing/invalid profiles with fallback resolution
-- Normalizes `tierStickiness` to range 0.0-1.0, and `defaultContextThresholdPercent` to positive values only
-- Validates `contextThresholdPercentOverrides` keys against known models; unknown keys cause a startup error
+- Normalizes `defaultContextThresholdPercent` to positive values only
+- Validates `contextThresholdPercentOverrides` keys against known models; unknown keys produce a warning on provider registration
 
 ---
 
@@ -218,8 +191,6 @@ To have the router activate automatically every time pi starts:
 ### 2. Runtime activation (current session only)
 
 Once the extension is loaded, run `/router profile <name>` to switch to a router profile. This activates and remembers the router profile for the current session.
-
---- 
 
 ## Commands
 
@@ -304,23 +275,18 @@ GATE 0: GOOGLE LOCK
   - Google thinking tool continuation? → preserve exact model/tier
      (skips EVERYTHING below)
 
-PIPELINE (always runs)
-  ├─ makeHeuristicAnalysis() — heuristic analysis (keyword/word-count/wc/tier-stickiness)
-  ├─ Manual pin check → use pinned tier if set
-  ├─ Custom rules → use configured tier if matched
-  ├─ Heuristic tier → advisory HeuristicAnalysis
-  └─ heuristicAnalysis is now ready
-
 GATE 1: CLASSIFIER GATING (only when classifierModels is configured)
+  - New user message? → run classifier
+  - Tool-result continuation?
+  - Manual pin → use pinned tier, classifier is skipped entirely
+  - No classifier configured or no result yet → default to `medium` (only when classifierModels is configured)
   - No pin, no context trigger, no Google continuation → evaluate gates
   - New user message? → run classifier (gates bypassed)
   - Tool-result continuation?
      ├─ contCount >= confInitN (first crossing)? → run once
      ├─ Consecutive failures >= confFailN? → run (crisis)
      ├─ contCount crosses new interval bucket? → run (periodic)
-     └─ Otherwise → reuse previous decision (classifier or heuristic)
-  - Classifier result final — heuristicAnalysis is
-    advisory input for the LLM classifier prompt
+     └─ Otherwise → reuse previous decision
 
 POST-ROUTE CORRECTIONS (always apply)
   - Image-aware escalation: upgrade tier if routed model
@@ -336,26 +302,11 @@ EXECUTION
   - Post-turn re-assert: re-select the router model after each turn if it was changed
 ```
 
-### Heuristic Details
 
-Without an LLM classifier, the router uses these signals locally:
-
-| Signal | Routes to |
-|---|---|
-| Word count > 40-120 (biased) | `high` |
-| Word count <= 4-12 (biased) | `low` |
-| Planning keywords (`plan`, `planning`, `architecture`, `architect`, `analyze`, `analysis`, `tradeoff`, `trade-off`, `research`, `investigate`, `root cause`, `design`, `strategy`, `compare`, `approach`, `migration`, `options`) | `high` |
-| Summary keywords (`summarize`, `summary`, `changelog`, `rewrite`, `reformat`, `format`, `rename`, `recap`, `tl;dr`, `explain briefly`) | `low` |
-| Implementation keywords (`implement`, `code`, `fix`, `update`, `edit`, `write`, `refactor`, `patch`, `change`, `apply`, `continue`, `resume`, `add tests`, `make the changes`, `go ahead`) | `medium` |
-| Explicit high hints (`best`, `deep`, `deeply`, `carefully`, `thoroughly`, `robust`, `comprehensive`, `step by step`, `think hard`, `highest quality`) | `high` |
-| Explicit low hints (`fast`, `cheap`, `quick`, `quickly`, `brief`, `briefly`, `one sentence`, `one line`, `tiny`, `small`) | `low` |
-| Lookup keywords (`where is`, `which file`, `show me`, `list`, `what files`, `find`, `grep`) + short prompt + no tools this turn | `low` |
-| Multi-line prompts (>=4 lines) | `high` |
-| `why` prefix question | `high` |
 
 ### Classifier Gating
 
-When the router has an LLM classifier configured (`classifierModels`), it doesn't run on every turn. Instead, the classifier is gated by smart triggers that avoid waste while catching real tier mismatches. **The classifier has final say on tier** (post-route corrections like image escalation) — heuristic analysis serves as advisory input to the LLM classifier prompt.
+When the router has an LLM classifier configured (`classifierModels`), it doesn't run on every turn. Instead, the classifier is gated by smart triggers that avoid waste while catching real tier mismatches. **The classifier has final say on tier** (post-route corrections like image escalation).
 
 | Gate | Trigger                                                                                     | Reason |
 |---|---------------------------------------------------------------------------------------------|---|
@@ -372,10 +323,7 @@ When the classifier is skipped, the **previous routing decision** is reused dire
 
 **Context & Image Requirements** (`defaultContextThresholdPercent`): When the conversation context exceeds this percentage of a model's window, or when images are detected, the router searches for a suitable model in the current or higher tiers. This check happens on every turn, but since context usage usually only grows across turns (unless compaction reduces it), the router will often stay in higher tiers once pushed there.
 
-**Tier Stickiness** (`tierStickiness`, 0.0-1.0, default `0.5`):
-- If the previous decision was `high` tier, the word-count high-threshold is lowered (`max(40, 120 - tierStickiness x 80)`), making it easier to stay in high.
-- If the previous decision was `high` or `medium` tier, the low-threshold is lowered (`max(4, 12 - tierStickiness x 8)`), requiring even fewer words to trigger a low-tier decision.
-- Stickiness only biases thresholds toward the current tier — it never overrides a clear signal.
+
 
 ### Fallback Chains
 
@@ -430,7 +378,7 @@ Route: medium -> google/gemini-flash-latest
 
 The `Route:` line may show decision flags in brackets when applicable:
 - `[classifier]` — routed by the LLM classifier
-- `[rule]` — routed by a custom rule
+
 - `[fallback]` — a fallback model was used
 - `[context]` — context threshold triggered an upgrade
 
@@ -457,12 +405,7 @@ The classifier gating notifications show why the classifier ran or was skipped (
 ```json
 {
   "classifierModels": ["google/gemini-flash-latest"],
-  "tierStickiness": 0.5,
   "defaultContextThresholdPercent": 70,
-  "rules": [
-    { "matches": ["deploy", "production", "release"], "tier": "high", "reason": "Safety check for production tasks" },
-    { "matches": "changelog", "tier": "low" }
-  ],
   "profiles": {
     "balanced": {
       "high":    { "model": "openai/gpt-5.4-pro", "thinking": "high", "fallbacks": ["anthropic/claude-3-5-sonnet-20241022"] },
@@ -477,7 +420,6 @@ The classifier gating notifications show why the classifier ran or was skipped (
 
 ```json
 {
-  "tierStickiness": 0.3,
   "profiles": {
     "cheap": {
       "high":   { "model": "google/gemini-flash-latest",     "thinking": "low" },
@@ -492,7 +434,6 @@ The classifier gating notifications show why the classifier ran or was skipped (
 
 ```json
 {
-  "tierStickiness": 0.8,
   "profiles": {
     "deep": {
       "high":   { "model": "openai/o1-preview",          "thinking": "xhigh" },

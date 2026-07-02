@@ -117,7 +117,6 @@ export const registerCommands = (
       `Selected profile: ${state.selectedProfile ?? 'none'}`,
       `Selected profile pin: ${profilePin}`,
       `Pins by profile: ${formatPinSummary(state.pinnedTierByProfile)}`,
-      `Tier stickiness: ${state.currentConfig.tierStickiness}`,
       `Available profiles: ${profileNames(state.currentConfig).join(', ')}`,
       `Last non-router model: ${state.lastNonRouterModel ?? 'none'}`,
       `Debug: ${state.debugEnabled ? 'on' : 'off'}`,
@@ -206,6 +205,14 @@ export const registerCommands = (
 
     const nextTier = pinValue === 'clear' ? undefined : pinValue;
     if (nextTier) {
+      const profile = state.currentConfig.profiles[profileName];
+      if (!profile || !profile[nextTier]) {
+        ctx.ui.notify(
+          `Profile "${profileName}" has no "${nextTier}" tier configured. All three tiers (high, medium, low) are required.`,
+          'error',
+        );
+        return;
+      }
       state.pinnedTierByProfile[profileName] = nextTier;
     } else {
       delete state.pinnedTierByProfile[profileName];
@@ -215,7 +222,7 @@ export const registerCommands = (
     ctx.ui.notify(
       nextTier
         ? `Router profile '${profileName}' pinned to ${nextTier}`
-        : `Router profile ${profileName} pin cleared; heuristic routing restored`,
+        : `Router profile ${profileName} pin cleared; classifier routing restored`,
       'info',
     );
   };

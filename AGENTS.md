@@ -9,7 +9,7 @@ The `pi-model-router` is an extension-first model router for the `pi` coding age
 - **Modularized Design**: Strictly follow the modular structure defined in Phase 3:
   - `extensions/types.ts`: All interfaces and type definitions.
   - `extensions/config.ts`: Configuration loading, normalization, and merging.
-  - `extensions/routing.ts`: Core routing logic (heuristics, classifier, rule matching).
+  - `extensions/routing.ts`: Core routing logic (classifier, gating).
   - `extensions/provider.ts`: Custom `router` provider registration and delegation stream.
   - `extensions/state.ts`: Session-persisted state management and snapshotting.
   - `extensions/ui.ts`: UI status line and widget rendering logic.
@@ -22,9 +22,8 @@ Routing follows a tiered system (`high`, `medium`, `low`) and an ordered decisio
 ### Phase 1: Intent Analysis
 1. **Manual Pin**: Use tier pinned via `/router pin` if set.
 2. **Google Thinking Lock**: Preserve the exact model/tier when a Google tool-result continuation is detected.
-3. **Custom Rules**: Check keyword-based rules against the user prompt.
-4. **Heuristics + Phase Bias**: Local analysis (word count, keywords, tool usage) with phase-behavior stickiness.
-5. **LLM Classifier (Optional)**: Call `classifierModel` for intent categorization (only if no pin and no rule match).
+3. **LLM Classifier (Optional)**: Call `classifierModel` for intent categorization. Has final say unless overridden by a pin.
+4. **Default fallback**: If no classifier configured or no result yet, defaults to `medium`.
 
 ### Phase 2: Requirement Matching (in `provider.ts`)
 The router searches tiers from the intent-suggested tier upwards using a two-pass strategy:
