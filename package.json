@@ -1,6 +1,6 @@
 {
   "name": "@kdejaeger/pi-model-router",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "type": "module",
   "description": "Intelligent per-turn model router extension for the pi coding agent",
   "keywords": [
@@ -41,10 +41,10 @@
     "prepublishOnly": "npm run tsc"
   },
   "peerDependencies": {
-    "@earendil-works/pi-agent-core": "*",
-    "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*",
+    "@earendil-works/pi-agent-core": "^0.80.1",
+    "@earendil-works/pi-ai": "^0.80.1",
+    "@earendil-works/pi-coding-agent": "^0.80.1",
+    "@earendil-works/pi-tui": "^0.80.1",
     "@sinclair/typebox": "*"
   },
   "devDependencies": {

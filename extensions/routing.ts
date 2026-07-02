@@ -1,4 +1,5 @@
-import { type Context, type Message, streamSimple } from '@earendil-works/pi-ai';
+import { streamSimple } from '@earendil-works/pi-ai/compat';
+import type { Context, Message } from '@earendil-works/pi-ai';
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { RouterConfig, RouterProfile, RouterTier, RoutingDecision } from './types';
 import { createOpenRouterOnPayload, OPENROUTER_ATTR_HEADERS, parseCanonicalModelRef, resolveModelFromRef } from './config';

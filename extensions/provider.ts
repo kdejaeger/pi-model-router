@@ -6,8 +6,8 @@ import {
   createAssistantMessageEventStream,
   type Model,
   type SimpleStreamOptions,
-  streamSimple
 } from '@earendil-works/pi-ai';
+import { streamSimple } from '@earendil-works/pi-ai/compat';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { RouterConfig, RouterPinByProfile, RouterTier, RoutingDecision } from './types';
 import { createOpenRouterOnPayload, OPENROUTER_ATTR_HEADERS, parseCanonicalModelRef, profileNames, resolveModelFromRef, ROUTER_TIERS } from './config';
@@ -95,7 +95,7 @@ export const registerRouterProvider = (
   const models = profileNames(currentConfig).map((name) => {
     const profile = currentConfig.profiles[name];
     let maxContextWindow = 0;
-    let maxOutputTokens = 0;
+    let maxTokens = 0;
 
     if (state.currentModelRegistry) {
       for (const tier of ROUTER_TIERS) {
@@ -108,7 +108,7 @@ export const registerRouterProvider = (
             const currentContextWindow = model.contextWindow ?? 0;
             if (currentContextWindow > maxContextWindow) {
               maxContextWindow = currentContextWindow;
-              maxOutputTokens = model.maxTokens ?? 120_000;
+              maxTokens = model.maxTokens ?? 120_000;
             }
           }
         }
@@ -116,7 +116,7 @@ export const registerRouterProvider = (
     }
 
     if (maxContextWindow === 0) maxContextWindow = 1_000_000;
-    if (maxOutputTokens === 0) maxOutputTokens = 120_000;
+    if (maxTokens === 0) maxTokens = 120_000;
 
     const profileSupportsReasoning = state.currentModelRegistry
       ? ROUTER_TIERS.some((tier) => {
@@ -138,7 +138,7 @@ export const registerRouterProvider = (
       input: ['text', 'image'] as ('text' | 'image')[],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: maxContextWindow,
-      maxTokens: maxOutputTokens,
+      maxTokens,
     };
   });
 
@@ -417,8 +417,8 @@ export const registerRouterProvider = (
 
           if (!success) {
             const errorMsg = `Failed to delegate to any model in the chain.${failureReasons.length > 0 ? ' Reasons: ' + failureReasons.filter(Boolean).join('; ') + '.' : ''}`;
-            const combined = lastError ? new Error(`${(lastError as Error).message} — ${errorMsg}`) : new Error(errorMsg);
-            throw combined;
+            const combinedError = lastError ? new Error(`${(lastError as Error).message} — ${errorMsg}`) : new Error(errorMsg);
+            throw combinedError;
           }
 
           stream.end();

@@ -131,7 +131,7 @@ Project config values override global values, which override built-in defaults. 
 | `classifierModelThinking` | `ThinkingLevel` | `off` | Reasoning/thinking level for the classifier model calls. Defaults to `off` (no extended reasoning) to keep calls fast and cheap.                                                                                                                                                                                                                                                                    |
 | `classifierRunOnceAfterToolCount` | `number` | `3` | Run the classifier once after this many tool continuations (only after the first user message of a turn). Default: 3. Set to 0 to disable.                                                                                                                                                                                                                                                                                                        |
 | `classifierRunAfterToolFailures` | `number` | `2` | Run the classifier after this many consecutive tool failures (counting from the tail of the current turn). Default: 2.                                                                                                                                                                                                                                                                                                  |
-| `classifierInterval` | `number` | `10` | Run the classifier every N tool continuations as a periodic re-check (compares crossed interval buckets). Default: 10. Set to 0 to disable.                                                                                                                                                                                                                                                                                             |
+| `classifierInterval` | `number` | `10` | Run the classifier every N tool continuations as a periodic re-check (crossed interval buckets). Default: 10. Set to 0 to disable.                                                                                                                                                                                                                                                                                             |
 | `defaultContextThresholdPercent` | `number` | `90`         | Default percentage threshold of a model's context window. If session context usage exceeds this percentage, the router searches for a suitable model in the current or higher tiers.                                                                                                                                                                                                                |
 | `contextThresholdPercentOverrides` | `Record<string, number>` | -- | **Optional.** Per-model context threshold overrides. Keys are canonical model refs in `"provider/model"` format. Values are the percentage of that model's context window that triggers an upgrade search. These take precedence over `defaultContextThresholdPercent`. Unknown keys produce a warning on provider registration. See [Context Threshold Overrides](#context-threshold-overrides). |
 | `profiles` | `object` | _(required)_ | Map of profile definitions.                                                                                                                                                                                                                                                                                                                                                                         |
@@ -276,16 +276,13 @@ GATE 0: GOOGLE LOCK
      (skips EVERYTHING below)
 
 GATE 1: CLASSIFIER GATING (only when classifierModels is configured)
-  - New user message? → run classifier
+  - Manual pin set → use pinned tier, classifier is skipped entirely
+  - No classifier result yet → default to `medium`
+  - New user message → run classifier
   - Tool-result continuation?
-  - Manual pin → use pinned tier, classifier is skipped entirely
-  - No classifier configured or no result yet → default to `medium` (only when classifierModels is configured)
-  - No pin, no context trigger, no Google continuation → evaluate gates
-  - New user message? → run classifier (gates bypassed)
-  - Tool-result continuation?
-     ├─ contCount >= confInitN (first crossing)? → run once
-     ├─ Consecutive failures >= confFailN? → run (crisis)
-     ├─ contCount crosses new interval bucket? → run (periodic)
+     ├─ contCount >= classifierRunOnceAfterToolCount (first crossing)? → run once
+     ├─ Consecutive failures >= classifierRunAfterToolFailures? → run (crisis)
+     ├─ contCount % classifierInterval === 0? → run (periodic)
      └─ Otherwise → reuse previous decision
 
 POST-ROUTE CORRECTIONS (always apply)
@@ -463,9 +460,3 @@ The classifier gating notifications show why the classifier ran or was skipped (
 ## Architecture
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a detailed architectural deep dive, including the decision flow, module responsibilities, state persistence, and fallback chain design.
-
----
-
-## License
-
-MIT (c) Ye Liu
