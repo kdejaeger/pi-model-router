@@ -114,9 +114,9 @@ Config is loaded from two locations and **merged**:
 
 ### Config Merging Order
 
-Configs are merged: **Fallback defaults <- Global config <- Project config**.
+Configs are merged: **Base defaults <- Global config <- Project config**.
 
-Project config values override global values, which override built-in defaults. Profiles are merged **deeply** -- if you define only a `high` tier override for a profile in your project config, the `medium` and `low` tiers are inherited from the global config (or fallback defaults).
+Project config values override global values, which override built-in defaults. Profiles are merged **deeply** -- if you define only a `high` tier override for a profile in your project config, the `medium` and `low` tiers are inherited from the global config.
 
 **When no config file exists**, the router loads with an empty profile list and no active models. Create a `.pi/model-router.json` with at least one profile to use the router.
 
@@ -146,7 +146,7 @@ Each profile defines three **tiers** (`high`, `medium`, `low`). Each tier config
 | `thinking` | `ThinkingLevel` | -- | **Optional.** Reasoning/thinking level for this tier. |
 | `fallbacks` | `string[]` | -- | **Optional.** Ordered list of fallback model refs. If the primary model fails, the router retries each fallback in sequence before surfacing an error. |
 
-**Valid thinking levels** (from least to most reasoning): `off`, `minimal`, `low`, `medium`, `high`, `xhigh`
+**Valid thinking levels** (from least to most reasoning): `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`
 
 ### Context Threshold Overrides
 
@@ -341,7 +341,7 @@ Each tier can define `fallbacks` -- an ordered list of alternative models. If th
 
 When a fallback is used, `decision.isFallback` is set to `true` and shown in the status. The tier's configured thinking level (or runtime override) applies to all fallback models -- if a fallback doesn't support the requested level, pi silently clamps it.
 
-If a model fails during a turn, the router retries it up to **2 times** before moving to the next fallback in the chain.
+If a model fails during a turn, the router retries it **once** (2 total attempts) before moving to the next fallback in the chain.
 
 ### Image-Aware Auto-Routing
 
@@ -365,28 +365,22 @@ This is a rough last-resort cut, not a replacement for pi's built-in session com
 
 **Persistent State:** Router state persists across agent restarts AND conversation branches via `pi.appendEntry` with a custom `router-state` entry type. Pins, debug mode, debug history, the last routing decision, and the last non-router model are all preserved. State is **branch-safe** -- different conversation branches maintain independent state using `sessionManager.getBranch()`.
 
-**Status Line:** The router shows its status in the pi TUI status bar:
+**Status Line:** The router shows its status as a single line in the pi TUI status bar, e.g.:
 ```
-Router: enabled
-Profile: balanced (active)
-Pin: none
-Route: medium -> google/gemini-flash-latest
+⇋  medium -> google/gemini-flash-latest
 ```
 
-The `Route:` line may show decision flags in brackets when applicable:
-- `[classifier]` — routed by the LLM classifier
-
+The status line may show decision flags in brackets when applicable:
 - `[fallback]` — a fallback model was used
 - `[context]` — context threshold triggered an upgrade
 
-**Debug History:** With `/router debug on`, routing decisions and classifier gating decisions are logged with timestamps. View with `/router debug show` to see the routing history:
+**Debug History:** With `/router debug on`, routing decisions and classifier runs are logged with timestamps. View with `/router debug show` to see the routing history:
 
 ```
-RUN classifier — init(≥3), interval(%10) (cont:5)
-SKIP classifier (cont:2, fail:0)
+Running router classifier — init(≥3), interval(%10) (cont:5) ...
 ```
 
-The classifier gating notifications show why the classifier ran or was skipped (`cont` = tool-result continuations since the last user message, `fail` = consecutive recent tool failures).
+The classifier notification shows why the classifier was triggered (`cont` = tool-result continuations since the last user message, `fail` = consecutive recent tool failures).
 ```
 [10:32:15 AM] high -> openai/gpt-5.4-pro (high) - Detected planning from keywords.
 [10:33:42 AM] medium -> google/gemini-flash-latest (medium) - Detected implementation work.

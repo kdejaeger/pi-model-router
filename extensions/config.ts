@@ -14,7 +14,7 @@ import type {
 
 export const ROUTER_TIERS = ['high', 'medium', 'low'] as const;
 
-const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];  
+const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];  
 export const ROUTER_PIN_VALUES = ['clear', 'high', 'medium', 'low'] as const;
 
 const isObjectRecord = (

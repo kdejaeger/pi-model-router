@@ -62,7 +62,7 @@ Router state is persisted using `pi.appendEntry` with a custom type `router-stat
 | Field | Type | Description |
 |---|---|---|
 | `selectedProfile` | `string` | Active profile name |
-| `pinnedTierByProfile` | `Record<string, TierLevel>` | Manual tier pins per profile |
+| `pinnedTierByProfile` | `Record<string, RouterTier>` | Manual tier pins per profile |
 | `debugEnabled` | `boolean` | Debug mode state |
 | `lastDecision` | `RoutingDecision` | Most recent routing decision |
 | `lastNonRouterModel` | `string` | Last model used before switching to router |
