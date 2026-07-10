@@ -65,7 +65,7 @@ pi -e ./extensions/index.ts
 
 1. **Install** the package (see above).
 
-2. **Create a config file** at `.pi/model-router.json` in your project:
+2. **Create a config file** at `.pi/model-router.json` in your project (bigger example configs later in this document):
 
    ```json
    {
@@ -127,7 +127,7 @@ Project config values override global values, which override built-in defaults. 
 | Field | Type | Default      | Description                                                                                                                                                                                                                                                                                                                                                                                         |
 |---|---|--------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `debug` | `boolean` | `false`      | Enable debug mode. Equivalent to running `/router debug on` at startup.                                                                                                                                                                                                                                                                                                                             |
-| `classifierModels` | `string[]` | --           | Array of fast model refs (e.g. `["google/gemini-flash-latest"]`) used to classify user intent via LLM. Models are tried in order, providing fallback if one hits an error. When set, the classifier has final say on tier selection (gated by triggers below). Omit to use fast local heuristics only.                                                                                              |
+| `classifierModels` | `string[]` | --           | Array of fast model refs (e.g. `["google/gemini-flash-latest"]`) used to classify user intent via LLM. Models are tried in order, providing fallback if one hits an error. When set, the classifier has final say on tier selection (gated by triggers below). Omit to always default to `medium` tier (no automatic tier switching).                                                                                              |
 | `classifierModelThinking` | `ThinkingLevel` | `off` | Reasoning/thinking level for the classifier model calls. Defaults to `off` (no extended reasoning) to keep calls fast and cheap.                                                                                                                                                                                                                                                                    |
 | `classifierRunOnceAfterToolCount` | `number` | `3` | Run the classifier once after this many tool continuations (only after the first user message of a turn). Default: 3. Set to 0 to disable.                                                                                                                                                                                                                                                                                                        |
 | `classifierRunAfterToolFailures` | `number` | `2` | Run the classifier after this many consecutive tool failures (counting from the tail of the current turn). Default: 2.                                                                                                                                                                                                                                                                                                  |
@@ -357,7 +357,7 @@ When using Google models with thinking enabled, tool-result continuations requir
 
 The router reports the **largest context window across all models in a profile** (scanning all tiers and their fallbacks for the maximum). When routing to a model with a smaller window, the router trims oldest messages (preserving the system prompt and the most recent message) to fit within the target model's limit.
 
-Estimated using a conservative heuristic: **4 characters = 1 token**.
+Conservative estimation: **4 characters = 1 token**.
 
 This is a rough last-resort cut, not a replacement for pi's built-in session compaction (`/compact`).
 
@@ -382,68 +382,101 @@ Running router classifier — init(≥3), interval(%10) (cont:5) ...
 
 The classifier notification shows why the classifier was triggered (`cont` = tool-result continuations since the last user message, `fail` = consecutive recent tool failures).
 ```
-[10:32:15 AM] high -> openai/gpt-5.4-pro (high) - Detected planning from keywords.
-[10:33:42 AM] medium -> google/gemini-flash-latest (medium) - Detected implementation work.
-[10:34:10 AM] low -> openai/gpt-5.4-nano (low) - Detected a short read-only lookup request.
+[10:32:15 AM] high -> openai/gpt-5.4-pro (high) - Classifier: multi-file architecture change across 4 services requires careful trade-off analysis.
+[10:33:42 AM] medium -> google/gemini-flash-latest (medium) - Classifier: implementing a well-defined feature with clear acceptance criteria.
+[10:34:10 AM] low -> openai/gpt-5.4-nano (low) - Classifier: simple field rename with no behavioral changes.
 ```
 
 ---
 
-## Example Configurations
-
-### Balanced (`balanced`)
+## Example Configuration
 
 ```json
 {
-  "classifierModels": ["google/gemini-flash-latest"],
-  "defaultContextThresholdPercent": 70,
-  "profiles": {
-    "balanced": {
-      "high":    { "model": "openai/gpt-5.4-pro", "thinking": "high", "fallbacks": ["anthropic/claude-3-5-sonnet-20241022"] },
-      "medium":  { "model": "google/gemini-flash-latest", "thinking": "medium" },
-      "low":     { "model": "openai/gpt-5.4-nano", "thinking": "low" }
-    }
-  }
-}
-```
+  "debug": true,
+  "classifierModels": ["openrouter/deepseek/deepseek-v4-flash"],
+  "classifierModelThinking": "high",
+  "defaultContextThresholdPercent": 80,
+  "contextThresholdPercentOverrides": {
+    "opencode/deepseek-v4-flash-free": 60,
+    "openrouter/deepseek/deepseek-v4-flash": 60,
+    "openrouter/deepseek/deepseek-v4-pro": 50,
 
-### Budget-Conscious (`cheap`)
+    "openrouter/google/gemma-4-31b-it": 50,
+    "openrouter/google/gemini-3-flash-preview": 80,
+    "openrouter/google/gemini-3.5-flash": 80,
+    "openrouter/google/gemini-3.1-pro-preview": 18,
 
-```json
-{
+    "openrouter/moonshotai/kimi-k2.6": 70,
+    "openrouter/moonshotai/kimi-k2.7-code": 60,
+
+    "openrouter/minimax/minimax-m3": 50,
+
+    "openrouter/z-ai/glm-5.2": 50,
+
+    "openai-codex/gpt-5.4-mini": 60,
+    "openai-codex/gpt-5.5": 60,
+    "openai-codex/gpt-5.6-luna": 65,
+    "openai-codex/gpt-5.6-terra": 65,
+    "openai-codex/gpt-5.6-sol": 65,
+    "openrouter/openai/gpt-5.4-nano": 30,
+
+    "openrouter/anthropic/claude-opus-4.8": 65,
+
+    "openrouter/x-ai/grok-4.5": 50
+  },
   "profiles": {
     "cheap": {
-      "high":   { "model": "google/gemini-flash-latest",     "thinking": "low" },
-      "medium": { "model": "openai/gpt-5.4-nano",            "thinking": "off" },
-      "low":    { "model": "google/gemini-flash-lite-latest", "thinking": "off" }
-    }
-  }
-}
-```
-
-### Deep Reasoning (`deep`)
-
-```json
-{
-  "profiles": {
-    "deep": {
-      "high":   { "model": "openai/o1-preview",          "thinking": "xhigh" },
-      "medium": { "model": "openai/gpt-5.4-pro",         "thinking": "medium" },
-      "low":    { "model": "google/gemini-flash-latest", "thinking": "low" }
-    }
-  }
-}
-```
-
-### Anthropic-Only (`anthropic`)
-
-```json
-{
-  "profiles": {
-    "anthropic": {
-      "high":   { "model": "anthropic/claude-3-5-sonnet-20241022", "thinking": "high" },
-      "medium": { "model": "anthropic/claude-3-5-sonnet-20241022", "thinking": "medium" },
-      "low":    { "model": "anthropic/claude-3-haiku-20240307",    "thinking": "low" }
+      "high": {
+        "model": "openrouter/deepseek/deepseek-v4-flash", "thinking": "xhigh",
+        "fallbacks": ["openrouter/minimax/minimax-m3"]
+      },
+      "medium": {
+        "model": "openrouter/deepseek/deepseek-v4-flash", "thinking": "high",
+        "fallbacks": ["openrouter/minimax/minimax-m3"]
+      },
+      "low": {
+        "model": "openrouter/deepseek/deepseek-v4-flash", "thinking": "off",
+        "fallbacks": ["openrouter/minimax/minimax-m3"]
+      }
+    },
+    "balanced": {
+      "high": {
+        "model": "openrouter/z-ai/glm-5.2", "thinking": "xhigh",
+        "fallbacks": ["openrouter/minimax/minimax-m3"]
+      },
+      "medium": {
+        "model": "openrouter/deepseek/deepseek-v4-flash", "thinking": "xhigh",
+        "fallbacks": ["openrouter/minimax/minimax-m3"]
+      },
+      "low": {
+        "model": "openrouter/deepseek/deepseek-v4-flash", "thinking": "off",
+        "fallbacks": ["openrouter/minimax/minimax-m3"]
+      }
+    },
+    "expensive": {
+      "high": {
+        "model": "openrouter/z-ai/glm-5.2", "thinking": "max",
+        "fallbacks": ["openrouter/x-ai/grok-4.5", "openai/gpt-5.6-luna"]
+      },
+      "medium": {
+        "model": "openrouter/z-ai/glm-5.2", "thinking": "max",
+        "fallbacks": ["openai/gpt-5.6-luna", "openrouter/x-ai/grok-4.5"]
+      },
+      "low": {
+        "model": "openrouter/minimax/minimax-m3", "thinking": "off",
+        "fallbacks": ["openrouter/z-ai/glm-5.2"]
+      }
+    },
+    "gpt-5.6": {
+      "high": {   "model": "openai/gpt-5.6-sol", "thinking": "medium" },
+      "medium": { "model": "openai/gpt-5.6-terra", "thinking": "high" },
+      "low": {    "model": "openai/gpt-5.6-luna", "thinking": "high" }
+    },
+    "opus-4.8": {
+      "high": {   "model": "openrouter/anthropic/claude-opus-4.8", "thinking": "medium" },
+      "medium": { "model": "openrouter/anthropic/claude-opus-4.8", "thinking": "low" },
+      "low": {    "model": "openrouter/anthropic/claude-opus-4.8", "thinking": "off" }
     }
   }
 }
