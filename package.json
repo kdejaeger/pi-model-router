@@ -1,6 +1,6 @@
 {
   "name": "@kdejaeger/pi-model-router",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "type": "module",
   "description": "Intelligent per-turn model router extension for the pi coding agent",
   "keywords": [
