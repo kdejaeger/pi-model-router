@@ -23,8 +23,8 @@ This extension (forked from [yeliu84/pi-model-router](https://github.com/yeliu84
 
 The pi-model-router registers itself as a **custom logical provider** (`router`) via `pi.registerProvider`. Each profile becomes a stable model (e.g., `router/cheap`). The model shown in your footer on the left stays fixed, while the underlying LLM changes per turn based on task complexity.
 
-![Router footer](docs/footer.png)
-![Router screenshot](docs/screenshot.png)
+![Router footer](https://raw.githubusercontent.com/kdejaeger/pi-model-router/main/docs/footer.png)
+![Router screenshot](https://raw.githubusercontent.com/kdejaeger/pi-model-router/main/docs/screenshot.png)
 
 For the full decision pipeline, see [How Routing Works](#how-routing-works).
 
