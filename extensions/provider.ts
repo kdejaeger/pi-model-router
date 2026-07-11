@@ -85,7 +85,6 @@ export const registerRouterProvider = (
   },
   actions: {
     persistState: () => void;
-    recordDebugDecision: (decision: RoutingDecision) => void;
     updateStatus: (ctx: ExtensionContext) => void;
   },
 ) => {
@@ -412,8 +411,6 @@ export const registerRouterProvider = (
               }
             }
           }
-
-          actions.recordDebugDecision(decision);
 
           if (!success) {
             const errorMsg = `Failed to delegate to any model in the chain.${failureReasons.length > 0 ? ' Reasons: ' + failureReasons.filter(Boolean).join('; ') + '.' : ''}`;

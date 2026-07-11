@@ -23,7 +23,6 @@ export const buildPersistedState = (
   selectedProfile: string | undefined,
   pinnedTierByProfile: RouterPinByProfile,
   debugEnabled: boolean,
-  debugHistory: RoutingDecision[],
   lastDecision?: RoutingDecision,
   lastNonRouterModel?: string,
 ): RouterPersistedState => ({
@@ -32,7 +31,6 @@ export const buildPersistedState = (
   pinTier: selectedProfile ? pinnedTierByProfile[selectedProfile] : undefined,
   pinByProfile: { ...pinnedTierByProfile },
   debugEnabled,
-  debugHistory,
   lastDecision,
   lastNonRouterModel,
   timestamp: Date.now(),

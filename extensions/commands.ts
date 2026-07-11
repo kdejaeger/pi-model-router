@@ -16,7 +16,6 @@ import {
 } from './config';
 import {
   formatPinSummary,
-  formatDecision,
 } from './ui';
 
 export const registerCommands = (
@@ -29,7 +28,6 @@ export const registerCommands = (
     readonly lastDecision: RoutingDecision | undefined;
     lastNonRouterModel: string | undefined;
     debugEnabled: boolean;
-    readonly debugHistory: RoutingDecision[];
     readonly lastConfigWarnings: string[];
   },
   actions: {
@@ -53,7 +51,7 @@ export const registerCommands = (
     { name: 'pin', desc: 'Pin routing for a profile to a tier, or clear' },
     { name: 'disable', desc: 'Disable the router and restore last model' },
 
-    { name: 'debug', desc: 'Toggle or clear router debug history' },
+    { name: 'debug', desc: 'Toggle router debug notifications on/off' },
     { name: 'reload', desc: 'Reload the model router configuration' },
     { name: 'help', desc: 'Show usage help for subcommands' },
   ];
@@ -120,7 +118,6 @@ export const registerCommands = (
       `Available profiles: ${profileNames(state.currentConfig).join(', ')}`,
       `Last non-router model: ${state.lastNonRouterModel ?? 'none'}`,
       `Debug: ${state.debugEnabled ? 'on' : 'off'}`,
-      `Debug history: ${state.debugHistory.length} decisions`,
     ];
     if (state.lastDecision) {
       lines.push(
@@ -261,22 +258,13 @@ export const registerCommands = (
 
   const handleDebug = async (args: string[], ctx: ExtensionContext) => {
     if (args.length > 1) {
-      ctx.ui.notify('Usage: /router debug <on|off|show|clear>', 'error');
+      ctx.ui.notify('Usage: /router debug <on|off>', 'error');
       return;
     }
     const cmd = args[0]?.toLowerCase();
     if (cmd === 'on') state.debugEnabled = true;
     else if (cmd === 'off') state.debugEnabled = false;
-    else if (cmd === 'clear') state.debugHistory.length = 0;
-    else if (cmd === 'show') {
-      if (state.debugHistory.length === 0) {
-        ctx.ui.notify('No recent routing decisions.', 'info');
-      } else {
-        const history = state.debugHistory.map(formatDecision).join('\n');
-        ctx.ui.notify(`Recent Routing Decisions:\n${history}`, 'info');
-      }
-      return;
-    } else {
+    else {
       state.debugEnabled = !state.debugEnabled;
     }
     actions.persistState();
@@ -363,7 +351,7 @@ export const registerCommands = (
         }
         case 'debug': {
           const debugPrefix = subArgs[0] ?? '';
-          const items = ['on', 'off', 'toggle', 'clear', 'show']
+          const items = ['on', 'off', 'toggle']
             .filter((v) => v.startsWith(debugPrefix))
             .map((v) => ({
               value: `debug ${v}`,
@@ -401,7 +389,6 @@ export const registerCommands = (
           await handleStatus(subArgs, ctx);
           break;
         case 'help':
-        case '?':
           if (subArgs.length > 0) {
             ctx.ui.notify('Usage: /router help (no arguments)', 'error');
             return;
@@ -413,9 +400,9 @@ export const registerCommands = (
               '  profile [name]              Switch to a profile (enables router if off). Lists available if no name.',
               '  pin [profile] <tier|clear>   Pin to a tier (high|medium|low) or clear the pin.',
               '  disable                     Disable the router and restore the last used non-router model.',
-              '  debug <on|off|show|clear>   Control routing debug logging to notifications and history.',
+              '  debug <on|off>            Enable/disable routing debug notifications.',
               '  reload                      Hot-reload the configuration JSON from .pi/model-router.json.',
-              '  help, ?                     Show this help message.',
+              '  help                         Show this help message.',
             ].join('\n'),
             'info',
           );

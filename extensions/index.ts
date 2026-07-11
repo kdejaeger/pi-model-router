@@ -28,7 +28,6 @@ const routerExtension = (pi: ExtensionAPI) => {
   let selectedProfile: string | undefined;
   let lastLoadedModelKeys = '';
   let pinnedTierByProfile: RouterPinByProfile = {};
-  let debugHistory: RoutingDecision[] = [];
   let lastNonRouterModel: string | undefined;
   let lastExtensionContext: ExtensionContext | undefined;
   let lastConfigWarnings: string[] = [];
@@ -47,18 +46,12 @@ const routerExtension = (pi: ExtensionAPI) => {
     }
   };
 
-  const MAX_DEBUG_HISTORY = 12;
-  const recordDebugDecision = (decision: RoutingDecision) => {
-    debugHistory = [...debugHistory, decision].slice(-MAX_DEBUG_HISTORY);
-  };
-
   const persistState = () => {
     const state = buildPersistedState(
       routerEnabled,
       selectedProfile,
       pinnedTierByProfile,
       debugEnabled,
-      debugHistory,
       lastDecision,
       lastNonRouterModel,
     );
@@ -68,10 +61,6 @@ const routerExtension = (pi: ExtensionAPI) => {
       lastDecision: state.lastDecision
         ? { ...state.lastDecision, timestamp: 0 }
         : undefined,
-      debugHistory: state.debugHistory?.map((decision) => ({
-        ...decision,
-        timestamp: 0,
-      })),
     });
     if (snapshot === lastPersistedSnapshot) {
       return;
@@ -210,7 +199,6 @@ const routerExtension = (pi: ExtensionAPI) => {
         },
         {
           persistState,
-          recordDebugDecision,
           updateStatus: actions.updateStatus,
         },
       );
@@ -234,7 +222,6 @@ const routerExtension = (pi: ExtensionAPI) => {
       ctx.model?.provider === 'router' ? ctx.model.id : selectedProfile,
     );
     pinnedTierByProfile = {};
-    debugHistory = [];
     lastNonRouterModel =
       ctx.model && ctx.model.provider !== 'router'
         ? `${ctx.model.provider}/${ctx.model.id}`
@@ -267,9 +254,6 @@ const routerExtension = (pi: ExtensionAPI) => {
         pinnedTierByProfile[selectedProfile] = savedState.pinTier;
       }
       debugEnabled = savedState.debugEnabled ?? debugEnabled;
-      debugHistory = savedState.debugHistory
-        ? [...savedState.debugHistory].slice(-MAX_DEBUG_HISTORY)
-        : [];
       lastNonRouterModel = savedState.lastNonRouterModel ?? lastNonRouterModel;
     }
 
@@ -335,9 +319,7 @@ const routerExtension = (pi: ExtensionAPI) => {
       set debugEnabled(v) {
         debugEnabled = v;
       },
-      get debugHistory() {
-        return debugHistory;
-      },
+      
       get lastConfigWarnings() {
         return lastConfigWarnings;
       },

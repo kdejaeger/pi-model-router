@@ -49,6 +49,36 @@ session_start / model_select / turn_end (index.ts)
         they do not perform routing themselves.
 ```
 
+## Config Merging Order
+
+Config is loaded from two locations and **merged**:
+
+| Location | Scope | Path |
+|---|---|---|
+| Global | User-wide | `~/.pi/agent/model-router.json` |
+| Project | Per-project | `.pi/model-router.json` |
+
+The merge order is: **Base defaults ← Global config ← Project config**.
+
+Project config values override global values, which override built-in defaults. Profiles are merged **deeply** — if you define only a `high` tier override for a profile in your project config, the `medium` and `low` tiers are inherited from the global config.
+
+**When no config file exists**, the router loads with an empty profile list and no active models.
+
+### Why Two Config Locations?
+
+- **Global config** (`~/.pi/agent/model-router.json`) lets you set cross-project defaults — profile definitions, classifier preferences, and context thresholds you want everywhere.
+- **Project config** (`.pi/model-router.json`) lets you override per-project — different profile choices, tighter context budgets, or debug flags for development.
+
+This is handled by `extensions/config.ts`, which normalizes and validates the merged result.
+
+### Config Validation
+
+On reload/startup, the config system validates:
+- Profile model refs are in `provider/model` format
+- Thinking levels are valid (`off` → `max`)
+- `defaultContextThresholdPercent` is positive
+- `contextThresholdPercentOverrides` keys match known models (unknown keys produce a warning on provider registration)
+
 ## State & Persistence
 
 Router state is persisted using `pi.appendEntry` with a custom type `router-state`. This allows the router to:
@@ -66,10 +96,8 @@ Router state is persisted using `pi.appendEntry` with a custom type `router-stat
 | `debugEnabled` | `boolean` | Debug mode state |
 | `lastDecision` | `RoutingDecision` | Most recent routing decision |
 | `lastNonRouterModel` | `string` | Last model used before switching to router |
-| `debugHistory` | `RoutingDecision[]` | Recent routing decisions |
+> **Branch safety**: Because state is saved via `pi.appendEntry`, each conversation branch gets its own independent state. Switching branches restores the pins and state that were active on that branch.
 
-> **Branch safety**: Because state is saved via `pi.appendEntry`, each conversation branch gets its own independent state. Switching branches restores the pins and history that were active on that branch.
+### Debug Mode
 
-### Debug History
-
-The debug history stores the last 12 routing decisions. When debug mode is enabled (`/router debug on`), each decision is appended to `debugHistory` and `/router debug show` prints the full history.
+Use `/router debug on` to enable debug notifications for routing decisions and classifier runs.

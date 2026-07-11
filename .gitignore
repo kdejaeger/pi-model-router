@@ -1,4 +1,5 @@
-.pi/
+.pi
+.pi-subagents
 node_modules
 router-debug.log
 docs/plans/

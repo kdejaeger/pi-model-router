@@ -51,7 +51,6 @@ export interface RouterPersistedState {
   pinTier?: RouterTier;
   pinByProfile?: RouterPinByProfile;
   debugEnabled?: boolean;
-  debugHistory?: RoutingDecision[];
   lastDecision?: RoutingDecision;
   lastNonRouterModel?: string;
   timestamp: number;

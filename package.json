@@ -33,7 +33,8 @@
   "pi": {
     "extensions": [
       "./extensions/index.ts"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/kdejaeger/pi-model-router/main/docs/icon.svg"
   },
   "scripts": {
     "tsc": "tsc --noEmit",
