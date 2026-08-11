@@ -382,7 +382,11 @@ export const registerRouterProvider = (
                 const MAX_ATTEMPTS_PER_MODEL = 2;
                 for (let attempt = 1; attempt <= MAX_ATTEMPTS_PER_MODEL; attempt++) {
                   try {
-                    const delegatedStream = streamSimple(targetModel, effectiveContext, effectiveOptions);
+                    const delegatedStream = streamSimple(
+                      auth.baseUrl ? { ...targetModel, baseUrl: auth.baseUrl } : targetModel,
+                      effectiveContext,
+                      effectiveOptions,
+                    );
                     let contentReceived = false;
                     for await (const event of delegatedStream) {
                       if (event.type === 'error' && !contentReceived) {

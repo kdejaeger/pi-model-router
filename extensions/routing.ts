@@ -257,7 +257,8 @@ export const runClassifier = async (
     const MAX_CLASSIFIER_ATTEMPTS = 3;
     for (let attempt = 1; attempt <= MAX_CLASSIFIER_ATTEMPTS; attempt++) {
       try {
-        const stream = streamSimple(model, classifierContext, classifierOptions);
+        const effectiveModel = auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model;
+        const stream = streamSimple(effectiveModel, classifierContext, classifierOptions);
         let fullText = '';
         for await (const event of stream) {
           if (event.type === 'error') throw new Error(event.error?.errorMessage ?? 'Unknown classifier error');
