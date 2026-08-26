@@ -445,11 +445,16 @@ export const registerRouterProvider = (
                   effectiveOptions.onPayload = onPayload;
                 }
 
+                // Apply credential-specific baseUrl override if resolved by getApiKeyAndHeaders
+                // (e.g. GitHub Copilot business/enterprise tenant endpoints) to avoid 421 Misdirected Request.
+                const authBaseUrl = (auth as { baseUrl?: string }).baseUrl;
+                const requestModel = authBaseUrl ? { ...targetModel, baseUrl: authBaseUrl } : targetModel;
+
                 let eventsPushed = 0;
                 const MAX_ATTEMPTS_PER_MODEL = 2;
                 for (let attempt = 1; attempt <= MAX_ATTEMPTS_PER_MODEL; attempt++) {
                   try {
-                    const delegatedStream = dispatchStream(targetModel, effectiveContext, effectiveOptions, modelRegistry);
+                    const delegatedStream = dispatchStream(requestModel, effectiveContext, effectiveOptions, modelRegistry);
                     let contentReceived = false;
                     for await (const event of delegatedStream) {
                       if (event.type === 'error' && !contentReceived) {

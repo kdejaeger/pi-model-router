@@ -262,10 +262,15 @@ export const runClassifier = async (
       if (onPayload) classifierOptions.onPayload = onPayload;
     }
 
+    // Apply credential-specific baseUrl override if resolved by getApiKeyAndHeaders
+    // (e.g. GitHub Copilot business/enterprise tenant endpoints) to avoid 421 Misdirected Request.
+    const authBaseUrl = (auth as { baseUrl?: string }).baseUrl;
+    const requestModel = authBaseUrl ? { ...model, baseUrl: authBaseUrl } : model;
+
     const MAX_CLASSIFIER_ATTEMPTS = 3;
     for (let attempt = 1; attempt <= MAX_CLASSIFIER_ATTEMPTS; attempt++) {
       try {
-        const stream = dispatchStream(model, classifierContext, classifierOptions, modelRegistry);
+        const stream = dispatchStream(requestModel, classifierContext, classifierOptions, modelRegistry);
         let fullText = '';
         for await (const event of stream) {
           if (event.type === 'error') throw new Error(event.error?.errorMessage ?? 'Unknown classifier error');
