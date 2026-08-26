@@ -1,8 +1,5 @@
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
-import type {
-  RoutingDecision,
-  RouterPinByProfile,
-} from './types';
+import type { RoutingDecision, RouterPinByProfile } from './types';
 
 const getDecisionFlags = (decision: RoutingDecision): string[] => {
   const flags: string[] = [];
@@ -15,9 +12,7 @@ export const formatDecision = (d: RoutingDecision): string => {
   return `[${new Date(d.timestamp).toLocaleTimeString()}] ${d.tier} -> ${d.targetProvider}/${d.targetModelId} (${d.thinking}) - ${d.reasoning}`;
 };
 
-export const formatPinSummary = (
-  pinnedTierByProfile: RouterPinByProfile,
-): string => {
+export const formatPinSummary = (pinnedTierByProfile: RouterPinByProfile): string => {
   const entries = Object.entries(pinnedTierByProfile)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([profile, tier]) => `${profile}:${tier}`);

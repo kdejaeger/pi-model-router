@@ -1,8 +1,13 @@
-import { streamSimple } from '@earendil-works/pi-ai/compat';
-import type { Context, Message } from '@earendil-works/pi-ai';
+import type { Context, Message, ProviderHeaders, SimpleStreamOptions } from '@earendil-works/pi-ai';
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { RouterConfig, RouterProfile, RouterTier, RoutingDecision } from './types';
-import { createOpenRouterOnPayload, OPENROUTER_ATTR_HEADERS, parseCanonicalModelRef, resolveModelFromRef } from './config';
+import {
+  createOpenRouterOnPayload,
+  dispatchStream,
+  OPENROUTER_ATTR_HEADERS,
+  parseCanonicalModelRef,
+  resolveModelFromRef,
+} from './config';
 
 export const extractTextFromContent = (content: string | Message['content']): string => {
   if (typeof content === 'string') {
@@ -27,7 +32,8 @@ const lastUserMessage = (context: Context): Message | undefined => {
   return undefined;
 };
 
-const escapeXML = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const escapeXML = (s: string): string =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 const getRecentConversationText = (context: Context, limit: number): string => {
   const messages = context.messages.slice(-limit);
@@ -239,15 +245,17 @@ export const runClassifier = async (
 
     const isOpenRouter = parseCanonicalModelRef(classifierModelRef).provider === 'openrouter';
 
-    const classifierOptions: Record<string, unknown> = {
-      apiKey: auth.apiKey,
-      headers: {
-        ...(auth.headers ?? {}),
-        ...(isOpenRouter ? OPENROUTER_ATTR_HEADERS : {}),
-      },
-      ...(thinking && thinking !== 'off' ? { reasoning: thinking } : {}),
+    const effectiveClassifierHeaders: ProviderHeaders = {
+      ...model.headers,
+      ...(isOpenRouter ? OPENROUTER_ATTR_HEADERS : {}),
+      ...auth.headers,
     };
 
+    const classifierOptions: SimpleStreamOptions = {
+      apiKey: auth.apiKey,
+      headers: effectiveClassifierHeaders,
+      ...(thinking && thinking !== 'off' ? { reasoning: thinking } : {}),
+    };
 
     if (isOpenRouter) {
       const onPayload = createOpenRouterOnPayload(extCtx?.sessionManager);
@@ -257,7 +265,7 @@ export const runClassifier = async (
     const MAX_CLASSIFIER_ATTEMPTS = 3;
     for (let attempt = 1; attempt <= MAX_CLASSIFIER_ATTEMPTS; attempt++) {
       try {
-        const stream = streamSimple(model, classifierContext, classifierOptions);
+        const stream = dispatchStream(model, classifierContext, classifierOptions, modelRegistry);
         let fullText = '';
         for await (const event of stream) {
           if (event.type === 'error') throw new Error(event.error?.errorMessage ?? 'Unknown classifier error');

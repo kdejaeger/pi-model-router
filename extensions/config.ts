@@ -1,26 +1,23 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { type Api, type Model } from '@earendil-works/pi-ai';
+import {
+  type Api,
+  type AssistantMessageEventStream,
+  type Context,
+  type Model,
+  type SimpleStreamOptions,
+} from '@earendil-works/pi-ai';
+import { streamSimple } from '@earendil-works/pi-ai/compat';
 import { getAgentDir, type ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
-import type {
-  RouterConfig,
-  RouterProfile,
-  RoutedTierConfig,
-  ConfigLoadResult,
-  ParsedConfigFile,
-  RouterTier,
-} from './types';
+import type { RouterConfig, RouterProfile, RoutedTierConfig, ConfigLoadResult, ParsedConfigFile, RouterTier } from './types';
 
 export const ROUTER_TIERS = ['high', 'medium', 'low'] as const;
 
-const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];  
+const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 export const ROUTER_PIN_VALUES = ['clear', 'high', 'medium', 'low'] as const;
 
-const isObjectRecord = (
-  value: unknown,
-): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null;
+const isObjectRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
 
 const isThinkingLevel = (value: unknown): value is ThinkingLevel =>
   typeof value === 'string' && THINKING_LEVELS.includes(value as ThinkingLevel);
@@ -32,7 +29,12 @@ const isThinkingLevel = (value: unknown): value is ThinkingLevel =>
 export const isPinValue = (value: string): value is (typeof ROUTER_PIN_VALUES)[number] =>
   (ROUTER_PIN_VALUES as readonly string[]).includes(value);
 
-const validateNonNegativeInt = (val: unknown, label: string, fallback: number | undefined, warnings: string[]): number | undefined => {
+const validateNonNegativeInt = (
+  val: unknown,
+  label: string,
+  fallback: number | undefined,
+  warnings: string[],
+): number | undefined => {
   if (val === undefined || val === null) return fallback;
   if (typeof val !== 'number' || !Number.isInteger(val) || val < 0) {
     warnings.push(`Invalid ${label} (${JSON.stringify(val)}). Must be a non-negative integer.`);
@@ -58,26 +60,18 @@ const parseConfigFile = (path: string): ParsedConfigFile => {
   } catch (error) {
     return {
       config: {},
-      warnings: [
-        `Failed to parse router config at ${path}: ${error instanceof Error ? error.message : String(error)}`,
-      ],
+      warnings: [`Failed to parse router config at ${path}: ${error instanceof Error ? error.message : String(error)}`],
     };
   }
 };
 
-const mergeTier = (
-  existing?: RoutedTierConfig,
-  next?: Partial<RoutedTierConfig>,
-): RoutedTierConfig | undefined => {
+const mergeTier = (existing?: RoutedTierConfig, next?: Partial<RoutedTierConfig>): RoutedTierConfig | undefined => {
   if (!next) return existing;
   if (!existing) return next?.model ? (next as RoutedTierConfig) : undefined;
   return { ...existing, ...next };
 };
 
-const mergeConfig = (
-  base: RouterConfig,
-  override: Partial<RouterConfig>,
-): RouterConfig => {
+const mergeConfig = (base: RouterConfig, override: Partial<RouterConfig>): RouterConfig => {
   const mergedProfiles: Record<string, RouterProfile> = { ...base.profiles };
   for (const [name, profile] of Object.entries(override.profiles ?? {})) {
     if (!isObjectRecord(profile)) continue;
@@ -92,37 +86,25 @@ const mergeConfig = (
   return {
     debug: override.debug ?? base.debug,
     classifierModels: override.classifierModels ?? base.classifierModels,
-    classifierModelThinking:
-      override.classifierModelThinking ?? base.classifierModelThinking,
-    classifierRunOnceAfterToolCount:
-      override.classifierRunOnceAfterToolCount ?? base.classifierRunOnceAfterToolCount,
-    classifierRunAfterToolFailures:
-      override.classifierRunAfterToolFailures ?? base.classifierRunAfterToolFailures,
-    classifierInterval:
-      override.classifierInterval ?? base.classifierInterval,
-    defaultContextThresholdPercent:
-      override.defaultContextThresholdPercent ?? base.defaultContextThresholdPercent,
-    contextThresholdPercentOverrides:
-      override.contextThresholdPercentOverrides ?? base.contextThresholdPercentOverrides,
+    classifierModelThinking: override.classifierModelThinking ?? base.classifierModelThinking,
+    classifierRunOnceAfterToolCount: override.classifierRunOnceAfterToolCount ?? base.classifierRunOnceAfterToolCount,
+    classifierRunAfterToolFailures: override.classifierRunAfterToolFailures ?? base.classifierRunAfterToolFailures,
+    classifierInterval: override.classifierInterval ?? base.classifierInterval,
+    defaultContextThresholdPercent: override.defaultContextThresholdPercent ?? base.defaultContextThresholdPercent,
+    contextThresholdPercentOverrides: override.contextThresholdPercentOverrides ?? base.contextThresholdPercentOverrides,
     profiles: mergedProfiles,
   };
 };
 
-export const parseCanonicalModelRef = (
-  value: string,
-): { provider: string; modelId: string } => {
+export const parseCanonicalModelRef = (value: string): { provider: string; modelId: string } => {
   const slashIndex = value.indexOf('/');
   if (slashIndex === -1) {
-    throw new Error(
-      `Invalid model reference "${value}". Expected "provider/model".`,
-    );
+    throw new Error(`Invalid model reference "${value}". Expected "provider/model".`);
   }
   const provider = value.slice(0, slashIndex).trim();
   const modelId = value.slice(slashIndex + 1).trim();
   if (!provider || !modelId) {
-    throw new Error(
-      `Invalid model reference "${value}". Expected "provider/model".`,
-    );
+    throw new Error(`Invalid model reference "${value}". Expected "provider/model".`);
   }
   return { provider, modelId };
 };
@@ -155,9 +137,7 @@ const normalizeTierConfig = (
 
   const model = typeof value.model === 'string' ? value.model.trim() : '';
   if (!model) {
-    warnings.push(
-      `Profile "${profileName}" ${tier} tier is missing a model. Tier disabled.`,
-    );
+    warnings.push(`Profile "${profileName}" ${tier} tier is missing a model. Tier disabled.`);
     return undefined;
   }
 
@@ -170,13 +150,9 @@ const normalizeTierConfig = (
     return undefined;
   }
 
-  const thinking = isThinkingLevel(value.thinking)
-    ? value.thinking
-    : 'medium';
+  const thinking = isThinkingLevel(value.thinking) ? value.thinking : 'medium';
   if (value.thinking !== undefined && !isThinkingLevel(value.thinking)) {
-    warnings.push(
-      `Profile "${profileName}" ${tier} tier has invalid thinking level. Defaulting to medium.`,
-    );
+    warnings.push(`Profile "${profileName}" ${tier} tier has invalid thinking level. Defaulting to medium.`);
   }
 
   let fallbacks: string[] | undefined;
@@ -213,29 +189,12 @@ const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
     if (trimmedName !== name) {
       warnings.push(`Profile name "${name}" has leading/trailing whitespace. Using "${trimmedName}".`);
     }
-    const high = normalizeTierConfig(
-      profile?.high,
-      trimmedName,
-      'high',
-      warnings,
-    );
-    const medium = normalizeTierConfig(
-      profile?.medium,
-      trimmedName,
-      'medium',
-      warnings,
-    );
-    const low = normalizeTierConfig(
-      profile?.low,
-      trimmedName,
-      'low',
-      warnings,
-    );
+    const high = normalizeTierConfig(profile?.high, trimmedName, 'high', warnings);
+    const medium = normalizeTierConfig(profile?.medium, trimmedName, 'medium', warnings);
+    const low = normalizeTierConfig(profile?.low, trimmedName, 'low', warnings);
 
     if (!high && !medium && !low) {
-      warnings.push(
-        `Profile "${trimmedName}" has no valid tiers. Skipped.`,
-      );
+      warnings.push(`Profile "${trimmedName}" has no valid tiers. Skipped.`);
       continue;
     }
     if (!high) {
@@ -271,9 +230,7 @@ const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
         `defaultContextThresholdPercent (${raw.defaultContextThresholdPercent}) is not a positive number. Falling back to 90.`,
       );
     } else if (raw.defaultContextThresholdPercent > 100) {
-      warnings.push(
-        `defaultContextThresholdPercent (${raw.defaultContextThresholdPercent}) exceeds 100. Falling back to 90.`,
-      );
+      warnings.push(`defaultContextThresholdPercent (${raw.defaultContextThresholdPercent}) exceeds 100. Falling back to 90.`);
     } else {
       defaultContextThresholdPercent = raw.defaultContextThresholdPercent;
     }
@@ -287,11 +244,15 @@ const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
           try {
             parseCanonicalModelRef(trimmed);
           } catch (error) {
-            warnings.push(`Ignored contextThresholdPercentOverride "${key}": invalid model reference — ${error instanceof Error ? error.message : String(error)}`);
+            warnings.push(
+              `Ignored contextThresholdPercentOverride "${key}": invalid model reference — ${error instanceof Error ? error.message : String(error)}`,
+            );
             return [];
           }
           if (typeof val !== 'number' || val <= 0) {
-            warnings.push(`Ignored contextThresholdPercentOverride "${key}" (${JSON.stringify(val)}): expected a positive number.`);
+            warnings.push(
+              `Ignored contextThresholdPercentOverride "${key}" (${JSON.stringify(val)}): expected a positive number.`,
+            );
             return [];
           }
           return [[trimmed, val] as [string, number]];
@@ -310,9 +271,7 @@ const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
           parseCanonicalModelRef(trimmedCM);
           classifierModels.push(trimmedCM);
         } catch (error) {
-          warnings.push(
-            `Invalid classifierModels entry "${rawCM}": ${error instanceof Error ? error.message : String(error)}`,
-          );
+          warnings.push(`Invalid classifierModels entry "${rawCM}": ${error instanceof Error ? error.message : String(error)}`);
         }
       } else {
         warnings.push(`Ignored non-string classifierModels entry: ${JSON.stringify(rawCM)}`);
@@ -328,8 +287,18 @@ const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
     warnings.push(`Invalid classifierModelThinking value "${raw.classifierModelThinking}". Falling back to "off".`);
   }
 
-  const classifierRunOnceAfterToolCount = validateNonNegativeInt(raw.classifierRunOnceAfterToolCount, 'classifierRunOnceAfterToolCount', 3, warnings);
-  const classifierRunAfterToolFailures = validateNonNegativeInt(raw.classifierRunAfterToolFailures, 'classifierRunAfterToolFailures', 2, warnings);
+  const classifierRunOnceAfterToolCount = validateNonNegativeInt(
+    raw.classifierRunOnceAfterToolCount,
+    'classifierRunOnceAfterToolCount',
+    3,
+    warnings,
+  );
+  const classifierRunAfterToolFailures = validateNonNegativeInt(
+    raw.classifierRunAfterToolFailures,
+    'classifierRunAfterToolFailures',
+    2,
+    warnings,
+  );
   const classifierInterval = validateNonNegativeInt(raw.classifierInterval, 'classifierInterval', 10, warnings);
 
   return {
@@ -354,18 +323,11 @@ export const loadRouterConfig = (cwd: string): ConfigLoadResult => {
   const globalResult = parseConfigFile(globalPath);
   const projectResult = parseConfigFile(projectPath);
   const baseConfig: RouterConfig = { profiles: {} };
-  const merged = mergeConfig(
-    mergeConfig(baseConfig, globalResult.config),
-    projectResult.config,
-  );
+  const merged = mergeConfig(mergeConfig(baseConfig, globalResult.config), projectResult.config);
   const normalized = normalizeConfig(merged);
   return {
     config: normalized.config,
-    warnings: [
-      ...globalResult.warnings,
-      ...projectResult.warnings,
-      ...normalized.warnings,
-    ],
+    warnings: [...globalResult.warnings, ...projectResult.warnings, ...normalized.warnings],
   };
 };
 
@@ -386,20 +348,57 @@ export const OPENROUTER_ATTR_HEADERS: Readonly<Record<string, string>> = {
 /** Create an onPayload handler that injects session_id for OpenRouter session tracking. */
 export const createOpenRouterOnPayload = (
   sessionProvider?: { getSessionId(): string; getSessionName(): string | undefined },
-  origOnPayload?: (p: any, m: any) => any,
-): ((p: any, m: any) => Promise<any>) | undefined => {
+  origOnPayload?: (payload: unknown, model: Model<Api>) => unknown | Promise<unknown>,
+): ((payload: unknown, model: Model<Api>) => Promise<unknown>) | undefined => {
   const rawId = sessionProvider?.getSessionId();
   const name = sessionProvider?.getSessionName();
   const sessionId = name && rawId ? `${name.replace(/\s+/g, '-')}-${rawId.slice(0, 8)}` : rawId;
   if (!sessionId) return undefined;
-  return async (p: any, m: any) => {
-    const payload = origOnPayload ? await origOnPayload(p, m) : p;
-    return { ...payload, session_id: sessionId };
+  return async (p: unknown, m: Model<Api>) => {
+    const payload = origOnPayload ? ((await origOnPayload(p, m)) ?? p) : p;
+    return typeof payload === 'object' && payload !== null ? { ...payload, session_id: sessionId } : payload;
   };
 };
 
-export const resolveProfileName = (
-  config: RouterConfig,
-  requested?: string,
-): string | undefined =>
+export const resolveProfileName = (config: RouterConfig, requested?: string): string | undefined =>
   requested && config.profiles[requested] ? requested : undefined;
+
+/**
+ * Duck-typing interface for forward-compatible dispatch with Pi ModelRegistry
+ * runtimes that register custom provider stream handlers.
+ */
+interface RegistryWithProviderDispatch {
+  getRegisteredProviderConfig?(providerName: string):
+    | {
+        api?: Api;
+        streamSimple?: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
+      }
+    | undefined;
+  getRegisteredNativeProvider?(providerName: string):
+    | {
+        streamSimple?: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
+      }
+    | undefined;
+}
+
+/**
+ * Dispatch streaming to a registered custom provider if available,
+ * falling back to the global compatibility streamSimple.
+ */
+export const dispatchStream = (
+  model: Model<Api>,
+  context: Context,
+  options: SimpleStreamOptions,
+  modelRegistry?: ExtensionContext['modelRegistry'],
+): AssistantMessageEventStream => {
+  const registry = modelRegistry as unknown as RegistryWithProviderDispatch | undefined;
+  const providerConfig = registry?.getRegisteredProviderConfig?.(model.provider);
+  if (providerConfig?.streamSimple && (!providerConfig.api || providerConfig.api === model.api)) {
+    return providerConfig.streamSimple(model, context, options);
+  }
+  const nativeProvider = registry?.getRegisteredNativeProvider?.(model.provider);
+  if (nativeProvider?.streamSimple) {
+    return nativeProvider.streamSimple(model, context, options);
+  }
+  return streamSimple(model, context, options);
+};

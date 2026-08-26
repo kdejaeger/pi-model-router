@@ -1,22 +1,8 @@
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-} from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { AutocompleteItem } from '@earendil-works/pi-tui';
-import type {
-  RouterConfig,
-  RouterPinByProfile,
-  RoutingDecision,
-} from './types';
-import {
-  profileNames,
-  ROUTER_PIN_VALUES,
-  resolveModelFromRef,
-  isPinValue,
-} from './config';
-import {
-  formatPinSummary,
-} from './ui';
+import type { RouterConfig, RouterPinByProfile, RoutingDecision } from './types';
+import { profileNames, ROUTER_PIN_VALUES, resolveModelFromRef, isPinValue } from './config';
+import { formatPinSummary } from './ui';
 
 export const registerCommands = (
   pi: ExtensionAPI,
@@ -33,16 +19,9 @@ export const registerCommands = (
   actions: {
     persistState: () => void;
     updateStatus: (ctx: ExtensionContext) => void;
-    reloadConfig: (
-      ctx?: ExtensionContext,
-      options?: { preserveDebug?: boolean },
-    ) => void;
+    reloadConfig: (ctx?: ExtensionContext, options?: { preserveDebug?: boolean }) => void;
     ensureValidActiveRouterProfile: (ctx: ExtensionContext) => Promise<void>;
-    switchToRouterProfile: (
-      profileName: string,
-      ctx: ExtensionContext,
-      strict?: boolean,
-    ) => Promise<boolean>;
+    switchToRouterProfile: (profileName: string, ctx: ExtensionContext, strict?: boolean) => Promise<boolean>;
   },
 ) => {
   const SUBCOMMAND_DETAILS = [
@@ -56,12 +35,8 @@ export const registerCommands = (
     { name: 'help', desc: 'Show usage help for subcommands' },
   ];
 
-  const getSubcommandCompletions = (
-    prefix: string,
-  ): AutocompleteItem[] | null => {
-    const items = SUBCOMMAND_DETAILS.filter((s) =>
-      s.name.startsWith(prefix),
-    ).map((s) => ({
+  const getSubcommandCompletions = (prefix: string): AutocompleteItem[] | null => {
+    const items = SUBCOMMAND_DETAILS.filter((s) => s.name.startsWith(prefix)).map((s) => ({
       value: s.name,
       label: s.name,
       description: s.desc,
@@ -73,9 +48,7 @@ export const registerCommands = (
     // pin [profile] <tier|clear>
     if (args.length <= 1) {
       const token = args[0] ?? '';
-      const pinItems = ROUTER_PIN_VALUES.filter((value) =>
-        value.startsWith(token),
-      ).map((value) => ({ value, label: value }));
+      const pinItems = ROUTER_PIN_VALUES.filter((value) => value.startsWith(token)).map((value) => ({ value, label: value }));
       const profileItems = profileNames(state.currentConfig)
         .filter((name) => name.startsWith(token))
         .map((name) => ({ value: name, label: `router/${name}` }));
@@ -86,9 +59,7 @@ export const registerCommands = (
     const profileToken = args[0];
     if (!state.currentConfig.profiles[profileToken]) return null;
     const pinPrefix = args[1] ?? '';
-    const items = ROUTER_PIN_VALUES.filter((value) =>
-      value.startsWith(pinPrefix),
-    ).map((value) => ({
+    const items = ROUTER_PIN_VALUES.filter((value) => value.startsWith(pinPrefix)).map((value) => ({
       value: `${profileToken} ${value}`,
       label: `${profileToken} ${value}`,
     }));
@@ -107,9 +78,7 @@ export const registerCommands = (
       ctx.ui.notify('Usage: /router status (no arguments)', 'error');
       return;
     }
-    const profilePin = state.selectedProfile
-      ? state.pinnedTierByProfile[state.selectedProfile] ?? 'none'
-      : 'none';
+    const profilePin = state.selectedProfile ? (state.pinnedTierByProfile[state.selectedProfile] ?? 'none') : 'none';
     const lines = [
       `Router enabled: ${state.routerEnabled ? 'yes' : 'off'}`,
       `Selected profile: ${state.selectedProfile ?? 'none'}`,
@@ -193,10 +162,7 @@ export const registerCommands = (
     }
 
     if (!isPinValue(pinValue)) {
-      ctx.ui.notify(
-        `Invalid router pin: ${pinValue}. Use high, medium, low, or clear`,
-        'error',
-      );
+      ctx.ui.notify(`Invalid router pin: ${pinValue}. Use high, medium, low, or clear`, 'error');
       return;
     }
 
@@ -235,10 +201,7 @@ export const registerCommands = (
     }
     const targetModel = resolveModelFromRef(state.lastNonRouterModel, ctx.modelRegistry);
     if (!targetModel) {
-      ctx.ui.notify(
-        `Recorded non-router model is unavailable: ${state.lastNonRouterModel}`,
-        'error',
-      );
+      ctx.ui.notify(`Recorded non-router model is unavailable: ${state.lastNonRouterModel}`, 'error');
       return;
     }
     const success = await pi.setModel(targetModel);
@@ -250,10 +213,7 @@ export const registerCommands = (
     actions.persistState();
     pi.setThinkingLevel('off');
     actions.updateStatus(ctx);
-    ctx.ui.notify(
-      `Router disabled. Restored ${state.lastNonRouterModel}`,
-      'info',
-    );
+    ctx.ui.notify(`Router disabled. Restored ${state.lastNonRouterModel}`, 'info');
   };
 
   const handleDebug = async (args: string[], ctx: ExtensionContext) => {
@@ -269,10 +229,7 @@ export const registerCommands = (
     }
     actions.persistState();
     actions.updateStatus(ctx);
-    ctx.ui.notify(
-      `Router debug ${state.debugEnabled ? 'enabled' : 'disabled'}.`,
-      'info',
-    );
+    ctx.ui.notify(`Router debug ${state.debugEnabled ? 'enabled' : 'disabled'}.`, 'info');
   };
 
   const handleReload = async (args: string[], ctx: ExtensionContext) => {
@@ -288,10 +245,7 @@ export const registerCommands = (
       ctx.ui.notify(`Router reload warnings:\n${state.lastConfigWarnings.join('\n')}`, 'warning');
     }
 
-    ctx.ui.notify(
-      `Router config reloaded. Profiles: ${profileNames(state.currentConfig).join(', ')}`,
-      'info',
-    );
+    ctx.ui.notify(`Router config reloaded. Profiles: ${profileNames(state.currentConfig).join(', ')}`, 'info');
   };
 
   pi.registerCommand('router', {
@@ -412,22 +366,13 @@ export const registerCommands = (
             // Check if subcommand is actually a profile name (backwards compatible-ish with /router-on)
             if (state.currentConfig.profiles[subcommand]) {
               if (subArgs.length > 0) {
-                ctx.ui.notify(
-                  `Usage: /router ${subcommand} (no extra arguments allowed)`,
-                  'error',
-                );
+                ctx.ui.notify(`Usage: /router ${subcommand} (no extra arguments allowed)`, 'error');
                 return;
               }
               await actions.switchToRouterProfile(subcommand, ctx);
-              ctx.ui.notify(
-                `Router enabled with profile: ${state.selectedProfile}`,
-                'info',
-              );
+              ctx.ui.notify(`Router enabled with profile: ${state.selectedProfile}`, 'info');
             } else {
-              ctx.ui.notify(
-                `Unknown router subcommand: ${subcommand}. Try /router help`,
-                'error',
-              );
+              ctx.ui.notify(`Unknown router subcommand: ${subcommand}. Try /router help`, 'error');
             }
           } else {
             await handleStatus(subArgs, ctx);

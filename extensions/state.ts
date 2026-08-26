@@ -1,21 +1,11 @@
-import type {
-  RouterPinByProfile,
-  RoutingDecision,
-  RouterPersistedState,
-} from './types';
+import type { RouterPinByProfile, RoutingDecision, RouterPersistedState } from './types';
 
-export const isRouterPersistedState = (
-  value: unknown,
-): value is RouterPersistedState => {
+export const isRouterPersistedState = (value: unknown): value is RouterPersistedState => {
   if (typeof value !== 'object' || value === null) {
     return false;
   }
   const v = value as Record<string, unknown>;
-  return (
-    typeof v.enabled === 'boolean' &&
-    typeof v.selectedProfile === 'string' &&
-    typeof v.timestamp === 'number'
-  );
+  return typeof v.enabled === 'boolean' && typeof v.selectedProfile === 'string' && typeof v.timestamp === 'number';
 };
 
 export const buildPersistedState = (

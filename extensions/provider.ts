@@ -5,14 +5,55 @@ import {
   type Context,
   createAssistantMessageEventStream,
   type Model,
+  type ProviderHeaders,
   type SimpleStreamOptions,
 } from '@earendil-works/pi-ai';
-import { streamSimple } from '@earendil-works/pi-ai/compat';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { RouterConfig, RouterPinByProfile, RouterTier, RoutingDecision } from './types';
-import { createOpenRouterOnPayload, OPENROUTER_ATTR_HEADERS, parseCanonicalModelRef, profileNames, resolveModelFromRef, ROUTER_TIERS } from './config';
-import { buildRoutingDecision, countToolResultsSinceLastUserPrompt, extractTextFromContent, runClassifier, shouldRunClassifier } from './routing';
+import {
+  createOpenRouterOnPayload,
+  dispatchStream,
+  OPENROUTER_ATTR_HEADERS,
+  parseCanonicalModelRef,
+  profileNames,
+  resolveModelFromRef,
+  ROUTER_TIERS,
+} from './config';
+import {
+  buildRoutingDecision,
+  countToolResultsSinceLastUserPrompt,
+  extractTextFromContent,
+  runClassifier,
+  shouldRunClassifier,
+} from './routing';
 import { formatDecision } from './ui';
+
+const REGISTRY_WAIT_TIMEOUT_MS = 5000;
+const REGISTRY_WAIT_INITIAL_DELAY_MS = 50;
+const REGISTRY_WAIT_MAX_DELAY_MS = 500;
+
+/**
+ * Wait for the model registry to become available with exponential backoff.
+ * This handles race conditions where subagents invoke the router provider
+ * before session_start has fired in their context.
+ */
+export const waitForRegistry = async (
+  state: {
+    readonly currentModelRegistry: ExtensionContext['modelRegistry'] | undefined;
+  },
+  timeoutMs: number = REGISTRY_WAIT_TIMEOUT_MS,
+): Promise<ExtensionContext['modelRegistry'] | undefined> => {
+  if (state.currentModelRegistry) return state.currentModelRegistry;
+
+  const start = Date.now();
+  let delay = REGISTRY_WAIT_INITIAL_DELAY_MS;
+  while (Date.now() - start < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    if (state.currentModelRegistry) return state.currentModelRegistry;
+    delay = Math.min(delay * 2, REGISTRY_WAIT_MAX_DELAY_MS);
+  }
+  return undefined;
+};
 
 const createErrorMessage = (model: Model<Api>, message: string): AssistantMessage => {
   return {
@@ -40,7 +81,7 @@ const estimateTokens = (text: string): number => Math.ceil(text.length / 4);
 
 /**
  * Truncate context to fit within a target token limit by removing oldest messages.
- * Always preserves the first system message and the latest user message.
+ * Preserves the first system message and the latest user message, ensuring no orphaned tool results.
  */
 const truncateContext = (context: Context, limit: number): Context => {
   const messages = [...context.messages];
@@ -53,10 +94,17 @@ const truncateContext = (context: Context, limit: number): Context => {
   const latestMessage = messages.pop()!;
   const latestTokens = estimateTokens(extractTextFromContent(latestMessage.content));
 
-  let runningTotal = systemTokens + latestTokens + messages.reduce((sum, m) => sum + estimateTokens(extractTextFromContent(m.content)), 0);
+  let runningTotal =
+    systemTokens + latestTokens + messages.reduce((sum, m) => sum + estimateTokens(extractTextFromContent(m.content)), 0);
   while (messages.length > 0 && runningTotal > limit) {
     const shifted = messages.shift()!;
     runningTotal -= estimateTokens(extractTextFromContent(shifted.content));
+  }
+
+  // Ensure the truncated context starts cleanly at a user prompt, rather than an orphaned toolResult
+  while (messages.length > 0 && messages[0].role === 'toolResult') {
+    const dropped = messages.shift()!;
+    runningTotal -= estimateTokens(extractTextFromContent(dropped.content));
   }
 
   return { ...context, messages: [...messages, latestMessage] };
@@ -123,9 +171,7 @@ export const registerRouterProvider = (
           if (!tierConfig) return false;
           return (
             resolveModelFromRef(tierConfig.model, state.currentModelRegistry)?.reasoning ||
-            tierConfig.fallbacks?.some(
-              (fb) => resolveModelFromRef(fb, state.currentModelRegistry)?.reasoning,
-            )
+            tierConfig.fallbacks?.some((fb) => resolveModelFromRef(fb, state.currentModelRegistry)?.reasoning)
           );
         })
       : false;
@@ -142,9 +188,9 @@ export const registerRouterProvider = (
   });
 
   if (state.currentModelRegistry) {
-    const invalidOverrides = Object.keys(
-      state.currentConfig.contextThresholdPercentOverrides ?? {},
-    ).filter((modelRef) => !resolveModelFromRef(modelRef, state.currentModelRegistry));
+    const invalidOverrides = Object.keys(state.currentConfig.contextThresholdPercentOverrides ?? {}).filter(
+      (modelRef) => !resolveModelFromRef(modelRef, state.currentModelRegistry),
+    );
 
     if (invalidOverrides.length > 0) {
       state.lastExtensionContext?.ui.notify(
@@ -157,25 +203,21 @@ export const registerRouterProvider = (
   const loadedModelKeys = models.map((m) => `${m.id}:${m.contextWindow}:${m.maxTokens}:${m.reasoning}`).join(',');
   if (state.lastLoadedModelKeys === loadedModelKeys) return; // models did not change, no need to re-register
 
-  pi.registerProvider(
-    'router', { // config (baseUrl, apiKey, ...)
+  pi.registerProvider('router', {
+    // config (baseUrl, apiKey, ...)
     baseUrl: 'router://local',
     apiKey: 'pi-model-router',
     api: 'router-local-api',
     models,
-    streamSimple: (
-      model: Model<Api>,
-      context: Context,
-      options?: SimpleStreamOptions,
-    ): AssistantMessageEventStream => {
+    streamSimple: (model: Model<Api>, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream => {
       const stream = createAssistantMessageEventStream();
       const ctx = state.lastExtensionContext;
-      const modelRegistry = state.currentModelRegistry;
 
       (async () => {
         try {
+          const modelRegistry = await waitForRegistry(state);
           if (!modelRegistry) {
-            throw new Error('Router provider not initialized yet. Wait for session_start and retry.');
+            throw new Error('Router provider initialization timed out. session_start may not have fired.');
           }
           const profile = currentConfig.profiles[model.id];
           if (!profile) {
@@ -200,7 +242,8 @@ export const registerRouterProvider = (
             lastDecision?.profile === model.id &&
             lastDecision?.targetProvider === 'google' &&
             lastDecision?.thinking !== 'off';
-          if (isGoogleContinuation) { // Google thinking lock — preserve exact model on tool-result continuations
+          if (isGoogleContinuation) {
+            // Google thinking lock — preserve exact model on tool-result continuations
             const toolResultsCount = countToolResultsSinceLastUserPrompt(context);
             decision = {
               ...lastDecision!,
@@ -216,7 +259,15 @@ export const registerRouterProvider = (
             if (currentConfig.classifierModels?.length && !pinnedTier) {
               const toolResultsCount = countToolResultsSinceLastUserPrompt(context);
 
-              bShouldRunClassifier = shouldRunClassifier(currentConfig, context, lastDecision, lastMsgWasTool, toolResultsCount, state.debugEnabled, ctx);
+              bShouldRunClassifier = shouldRunClassifier(
+                currentConfig,
+                context,
+                lastDecision,
+                lastMsgWasTool,
+                toolResultsCount,
+                state.debugEnabled,
+                ctx,
+              );
               const classifierResult = bShouldRunClassifier
                 ? await runClassifier(currentConfig, modelRegistry, context, lastDecision, ctx, state.debugEnabled)
                 : null;
@@ -295,7 +346,8 @@ export const registerRouterProvider = (
 
                 const thresholdPercent =
                   currentConfig.contextThresholdPercentOverrides?.[modelRef] ??
-                  currentConfig.defaultContextThresholdPercent ?? 90;
+                  currentConfig.defaultContextThresholdPercent ??
+                  90;
                 const targetContextWindow = targetModel.contextWindow || 200_000;
                 const targetContextLimit = Math.floor((thresholdPercent / 100) * targetContextWindow);
                 const fitsContext = tokensUsed <= targetContextLimit;
@@ -315,7 +367,9 @@ export const registerRouterProvider = (
 
                   if (tier !== decision.tier) {
                     decision = buildRoutingDecision(
-                      model.id, profile, tier,
+                      model.id,
+                      profile,
+                      tier,
                       `Forced ${tier} tier because ${decision.tier} tier lacks models${triggerReasons ? ` for ${triggerReasons}` : ''}.`,
                       decision.lastClassifierRunToolCount,
                     );
@@ -330,10 +384,14 @@ export const registerRouterProvider = (
                 decision.isContextTriggered = !fitsContext;
 
                 if (ctx) {
-                  if (state.debugEnabled && bShouldRunClassifier) {
-                    ctx.ui.notify(`Decision ${formatDecision(decision)}`, 'info');
+                  try {
+                    if (state.debugEnabled && bShouldRunClassifier) {
+                      ctx.ui.notify(`Decision ${formatDecision(decision)}`, 'info');
+                    }
+                    actions.updateStatus(ctx);
+                  } catch {
+                    // Stale extension context
                   }
-                  actions.updateStatus(ctx);
                 }
 
                 const auth = await modelRegistry.getApiKeyAndHeaders(targetModel);
@@ -351,20 +409,28 @@ export const registerRouterProvider = (
                 let effectiveContext = context;
                 if (!fitsContext) {
                   effectiveContext = truncateContext(context, targetContextLimit);
-                  ctx?.ui.notify(`Memory too large for ${modelRef} — trimmed ${context.messages.length - effectiveContext.messages.length} messages. Run /compact to reduce context size.`, 'warning');
+                  ctx?.ui.notify(
+                    `Memory too large for ${modelRef} — trimmed ${context.messages.length - effectiveContext.messages.length} messages. Run /compact to reduce context size.`,
+                    'warning',
+                  );
                 }
 
                 // Attention: stripping reasoning from pi's incoming options so it doesn't leak into ...baseOptions. The router controls this via delegatedReasoning below.
                 const { onPayload, headers: originalHeaders, reasoning: _incomingReasoning, ...baseOptions } = options ?? {};
 
-                const effectiveHeaders: Record<string, string> = {
-                  ...(originalHeaders as Record<string, string> | undefined),
-                  ...(auth.headers ?? {}),
+                const effectiveHeaders: ProviderHeaders = {
+                  ...targetModel.headers,
                   ...(targetProvider === 'openrouter' ? OPENROUTER_ATTR_HEADERS : {}),
+                  ...auth.headers,
+                  ...originalHeaders,
                 };
 
                 const delegatedReasoning = targetModel.reasoning && decision.thinking !== 'off' ? decision.thinking : undefined;
-                pi.setThinkingLevel(delegatedReasoning ?? 'off');
+                try {
+                  pi.setThinkingLevel(delegatedReasoning ?? 'off');
+                } catch {
+                  // Stale extension context after session teardown
+                }
 
                 const effectiveOptions: SimpleStreamOptions = {
                   ...baseOptions,
@@ -379,10 +445,11 @@ export const registerRouterProvider = (
                   effectiveOptions.onPayload = onPayload;
                 }
 
+                let eventsPushed = 0;
                 const MAX_ATTEMPTS_PER_MODEL = 2;
                 for (let attempt = 1; attempt <= MAX_ATTEMPTS_PER_MODEL; attempt++) {
                   try {
-                    const delegatedStream = streamSimple(targetModel, effectiveContext, effectiveOptions);
+                    const delegatedStream = dispatchStream(targetModel, effectiveContext, effectiveOptions, modelRegistry);
                     let contentReceived = false;
                     for await (const event of delegatedStream) {
                       if (event.type === 'error' && !contentReceived) {
@@ -397,15 +464,23 @@ export const registerRouterProvider = (
                         contentReceived = true;
                       }
                       stream.push(event);
+                      eventsPushed++;
                     }
                     success = true;
                     state.lastDecision = decision;
                     break attemptLoop;
                   } catch (err) {
                     lastError = err;
+                    if (eventsPushed > 0) {
+                      // Stream was already partially transmitted to the consumer; cannot retry or fall back safely.
+                      throw err;
+                    }
                     const remaining = MAX_ATTEMPTS_PER_MODEL - attempt;
                     const retryMsg = remaining > 0 ? ` — ${remaining} ${remaining === 1 ? 'retry' : 'retries'} left` : '';
-                    ctx?.ui.notify(`Failed to reach model ${modelRef} (attempt ${attempt}/${MAX_ATTEMPTS_PER_MODEL}): ${err}${retryMsg}`, 'warning');
+                    ctx?.ui.notify(
+                      `Failed to reach model ${modelRef} (attempt ${attempt}/${MAX_ATTEMPTS_PER_MODEL}): ${err}${retryMsg}`,
+                      'warning',
+                    );
                   }
                 }
               }
@@ -414,20 +489,34 @@ export const registerRouterProvider = (
 
           if (!success) {
             const errorMsg = `Failed to delegate to any model in the chain.${failureReasons.length > 0 ? ' Reasons: ' + failureReasons.filter(Boolean).join('; ') + '.' : ''}`;
-            const combinedError = lastError ? new Error(`${(lastError as Error).message} — ${errorMsg}`) : new Error(errorMsg);
+            const lastErrorText = lastError instanceof Error ? lastError.message : String(lastError ?? '');
+            const combinedError = lastError ? new Error(`${lastErrorText} — ${errorMsg}`) : new Error(errorMsg);
             throw combinedError;
           }
 
           stream.end();
         } catch (error) {
-          stream.push({
-            type: 'error',
-            reason: 'error',
-            error: createErrorMessage(model, error instanceof Error ? error.message : String(error)),
-          });
+          const isStaleCtx = error instanceof Error && error.message.includes('stale');
+          if (isStaleCtx) {
+            stream.push({
+              type: 'done',
+              reason: 'stop',
+              message: createErrorMessage(model, ''),
+            });
+          } else {
+            stream.push({
+              type: 'error',
+              reason: 'error',
+              error: createErrorMessage(model, error instanceof Error ? error.message : String(error)),
+            });
+          }
           stream.end();
         } finally {
-          actions.persistState();
+          try {
+            actions.persistState();
+          } catch {
+            // Ignore: extension context may be stale after session teardown.
+          }
         }
       })();
 

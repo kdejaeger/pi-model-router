@@ -1,18 +1,6 @@
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-} from '@earendil-works/pi-coding-agent';
-import {
-  type RouterConfig,
-  type RoutingDecision,
-  type RouterPinByProfile,
-  type CustomSessionEntry,
-} from './types';
-import {
-  loadRouterConfig,
-  profileNames,
-  resolveProfileName,
-} from './config';
+import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
+import { type RouterConfig, type RoutingDecision, type RouterPinByProfile, type CustomSessionEntry } from './types';
+import { loadRouterConfig, profileNames, resolveProfileName } from './config';
 import { isRouterPersistedState, buildPersistedState } from './state';
 import { updateStatus } from './ui';
 import { registerCommands } from './commands';
@@ -35,12 +23,13 @@ const routerExtension = (pi: ExtensionAPI) => {
   let isInitialized = false;
   let isRouterDelegating = false;
 
-  const setModelInternally = async (
-    model: NonNullable<ExtensionContext['model']>,
-  ) => {
+  const setModelInternally = async (model: NonNullable<ExtensionContext['model']>) => {
     isRouterDelegating = true;
     try {
       return await pi.setModel(model);
+    } catch {
+      // Extension context may be stale after session teardown.
+      return false;
     } finally {
       isRouterDelegating = false;
     }
@@ -58,31 +47,24 @@ const routerExtension = (pi: ExtensionAPI) => {
     const snapshot = JSON.stringify({
       ...state,
       timestamp: 0,
-      lastDecision: state.lastDecision
-        ? { ...state.lastDecision, timestamp: 0 }
-        : undefined,
+      lastDecision: state.lastDecision ? { ...state.lastDecision, timestamp: 0 } : undefined,
     });
     if (snapshot === lastPersistedSnapshot) {
       return;
     }
-    pi.appendEntry('router-state', state);
+    try {
+      pi.appendEntry('router-state', state);
+    } catch {
+      // Defensive fallback: session_shutdown or teardown may have invalidated context
+      return;
+    }
     lastPersistedSnapshot = snapshot;
   };
 
   const actions = {
     persistState,
-    updateStatus: (ctx: ExtensionContext) =>
-      updateStatus(
-        ctx,
-        routerEnabled,
-        selectedProfile,
-        pinnedTierByProfile,
-        lastDecision,
-      ),
-    reloadConfig: (
-      ctx?: ExtensionContext,
-      options?: { preserveDebug?: boolean },
-    ) => {
+    updateStatus: (ctx: ExtensionContext) => updateStatus(ctx, routerEnabled, selectedProfile, pinnedTierByProfile, lastDecision),
+    reloadConfig: (ctx?: ExtensionContext, options?: { preserveDebug?: boolean }) => {
       const loaded = loadRouterConfig(currentCwd);
       currentConfig = loaded.config;
       lastConfigWarnings = loaded.warnings;
@@ -114,11 +96,7 @@ const routerExtension = (pi: ExtensionAPI) => {
       routerEnabled = false;
       selectedProfile = undefined;
     },
-    switchToRouterProfile: async (
-      profileName: string,
-      ctx: ExtensionContext,
-      strict = true,
-    ) => {
+    switchToRouterProfile: async (profileName: string, ctx: ExtensionContext, strict = true) => {
       if (!currentConfig.profiles[profileName]) {
         if (strict) {
           ctx.ui.notify(`Unknown router profile: ${profileName}`, 'error');
@@ -146,7 +124,11 @@ const routerExtension = (pi: ExtensionAPI) => {
       selectedProfile = profileName;
       routerEnabled = true;
       persistState();
-      pi.setThinkingLevel('off');
+      try {
+        pi.setThinkingLevel('off');
+      } catch {
+        // Stale context
+      }
       actions.updateStatus(ctx);
       return true;
     },
@@ -217,39 +199,26 @@ const routerExtension = (pi: ExtensionAPI) => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     routerEnabled = ctx.model?.provider === 'router';
-    selectedProfile = resolveProfileName(
-      currentConfig,
-      ctx.model?.provider === 'router' ? ctx.model.id : selectedProfile,
-    );
+    selectedProfile = resolveProfileName(currentConfig, ctx.model?.provider === 'router' ? ctx.model.id : selectedProfile);
     pinnedTierByProfile = {};
     lastNonRouterModel =
-      ctx.model && ctx.model.provider !== 'router'
-        ? `${ctx.model.provider}/${ctx.model.id}`
-        : lastNonRouterModel;
+      ctx.model && ctx.model.provider !== 'router' ? `${ctx.model.provider}/${ctx.model.id}` : lastNonRouterModel;
 
     const entries = ctx.sessionManager.getBranch() as CustomSessionEntry[];
     const savedState = entries
-      .filter(
-        (entry) =>
-          entry.type === 'custom' && entry.customType === 'router-state',
-      )
+      .filter((entry) => entry.type === 'custom' && entry.customType === 'router-state')
       .map((entry) => entry.data)
       .findLast((data) => isRouterPersistedState(data));
 
     if (isRouterPersistedState(savedState)) {
-      selectedProfile = resolveProfileName(
-        currentConfig,
-        savedState.selectedProfile,
-      );
+      selectedProfile = resolveProfileName(currentConfig, savedState.selectedProfile);
       if (!selectedProfile) {
         routerEnabled = false;
       } else {
         routerEnabled = savedState.enabled;
       }
       lastDecision = savedState.lastDecision;
-      pinnedTierByProfile = savedState.pinByProfile
-        ? { ...savedState.pinByProfile }
-        : {};
+      pinnedTierByProfile = savedState.pinByProfile ? { ...savedState.pinByProfile } : {};
       if (savedState.pinTier && selectedProfile) {
         pinnedTierByProfile[selectedProfile] = savedState.pinTier;
       }
@@ -319,13 +288,22 @@ const routerExtension = (pi: ExtensionAPI) => {
       set debugEnabled(v) {
         debugEnabled = v;
       },
-      
+
       get lastConfigWarnings() {
         return lastConfigWarnings;
       },
     },
     actions,
   );
+
+  const ensureInitializedFromContext = (ctx: ExtensionContext) => {
+    if (!currentModelRegistry) {
+      currentModelRegistry = ctx.modelRegistry;
+      lastExtensionContext = ctx;
+      currentCwd = ctx.cwd;
+      actions.reloadConfig(ctx);
+    }
+  };
 
   pi.on('session_start', async (_event, ctx) => {
     await restoreStateFromSession(ctx);
@@ -336,14 +314,16 @@ const routerExtension = (pi: ExtensionAPI) => {
     }
 
     if (debugEnabled) {
-      ctx.ui.notify(
-        `Router initialized with profiles: ${profileNames(currentConfig).join(', ')}`,
-        'info',
-      );
+      ctx.ui.notify(`Router initialized with profiles: ${profileNames(currentConfig).join(', ')}`, 'info');
     }
   });
 
+  pi.on('turn_start', async (_event, ctx) => {
+    ensureInitializedFromContext(ctx);
+  });
+
   pi.on('model_select', async (event, ctx) => {
+    ensureInitializedFromContext(ctx);
     if (!isInitialized || isRouterDelegating) return;
     if (event.model.provider === 'router') {
       const profileName = resolveProfileName(currentConfig, event.model.id);
@@ -357,8 +337,7 @@ const routerExtension = (pi: ExtensionAPI) => {
       const registryModel = ctx.modelRegistry.find('router', profileName);
       if (
         registryModel &&
-        (registryModel.contextWindow !== event.model.contextWindow ||
-          registryModel.maxTokens !== event.model.maxTokens)
+        (registryModel.contextWindow !== event.model.contextWindow || registryModel.maxTokens !== event.model.maxTokens)
       ) {
         await setModelInternally(registryModel);
       }
@@ -375,19 +354,28 @@ const routerExtension = (pi: ExtensionAPI) => {
   });
 
   pi.on('turn_end', async (_event, ctx) => {
+    ensureInitializedFromContext(ctx);
     if (routerEnabled && selectedProfile && ctx.model?.provider !== 'router') {
       const routerModel = ctx.modelRegistry.find('router', selectedProfile);
       if (routerModel) {
         const success = await setModelInternally(routerModel);
         if (!success) {
-          ctx.ui.notify('Failed to re-assert router model after turn. Router disabled.', 'warning');
+          try {
+            ctx.ui.notify('Failed to re-assert router model after turn. Router disabled.', 'warning');
+          } catch {
+            // Stale context
+          }
           routerEnabled = false;
           selectedProfile = undefined;
         }
       }
     }
     persistState();
-    actions.updateStatus(ctx);
+    try {
+      actions.updateStatus(ctx);
+    } catch {
+      // Stale context
+    }
   });
 };
 
