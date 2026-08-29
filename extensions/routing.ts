@@ -8,6 +8,7 @@ import {
   parseCanonicalModelRef,
   resolveModelFromRef,
 } from './config';
+import { isProviderSuspended, isRateLimitError, suspendProvider } from './failover';
 
 export const extractTextFromContent = (content: string | Message['content']): string => {
   if (typeof content === 'string') {
@@ -220,6 +221,7 @@ export const runClassifier = async (
   previousDecision: RoutingDecision | undefined,
   extCtx?: ExtensionContext,
   debugEnabled = false,
+  providerCooldowns?: Map<string, number>,
 ): Promise<{ tier: RouterTier; reasoning: string } | undefined> => {
   const classifierModels = currentConfig.classifierModels ?? [];
   if (classifierModels.length === 0) return undefined;
@@ -233,6 +235,10 @@ export const runClassifier = async (
     const model = resolveModelFromRef(classifierModelRef, modelRegistry);
     if (!model) {
       extCtx?.ui.notify(`[router] Classifier model "${classifierModelRef}" is not available, skipping.`, 'warning');
+      continue;
+    }
+    if (providerCooldowns && isProviderSuspended(providerCooldowns, model.provider)) {
+      extCtx?.ui.notify(`[router] Classifier provider ${model.provider} is temporarily suspended after a rate limit.`, 'warning');
       continue;
     }
 
@@ -289,6 +295,10 @@ export const runClassifier = async (
           extCtx.ui.notify('[router] Classifier gave an unparseable response.', 'warning');
         }
       } catch (_err) {
+        if (isRateLimitError(_err)) {
+          if (providerCooldowns) suspendProvider(providerCooldowns, model.provider, _err);
+          break;
+        }
         if (attempt < MAX_CLASSIFIER_ATTEMPTS) {
           const errMsg = (_err as Error)?.message ?? String(_err);
           const detectedStatus = /429|Too Many Requests|rate.?limit/i.test(errMsg) ? 429 : undefined;

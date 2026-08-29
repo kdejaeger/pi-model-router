@@ -27,6 +27,7 @@ import {
   shouldRunClassifier,
 } from './routing';
 import { formatDecision } from './ui';
+import { isProviderSuspended, isRateLimitError, suspendProvider } from './failover';
 
 const REGISTRY_WAIT_TIMEOUT_MS = 5000;
 const REGISTRY_WAIT_INITIAL_DELAY_MS = 50;
@@ -130,10 +131,12 @@ export const registerRouterProvider = (
     lastDecision: RoutingDecision | undefined;
     readonly pinnedTierByProfile: RouterPinByProfile;
     debugEnabled: boolean;
+    readonly providerCooldowns: Map<string, number>;
   },
   actions: {
     persistState: () => void;
     updateStatus: (ctx: ExtensionContext) => void;
+    requestContextCompaction: (ctx: ExtensionContext) => void;
   },
 ) => {
   const currentConfig = state.currentConfig;
@@ -269,7 +272,15 @@ export const registerRouterProvider = (
                 ctx,
               );
               const classifierResult = bShouldRunClassifier
-                ? await runClassifier(currentConfig, modelRegistry, context, lastDecision, ctx, state.debugEnabled)
+                ? await runClassifier(
+                    currentConfig,
+                    modelRegistry,
+                    context,
+                    lastDecision,
+                    ctx,
+                    state.debugEnabled,
+                    state.providerCooldowns,
+                  )
                 : null;
 
               if (classifierResult) {
@@ -337,6 +348,10 @@ export const registerRouterProvider = (
                 const targetModel = resolveModelFromRef(modelRef, modelRegistry);
                 if (!targetModel) {
                   failureReasons.push(`${modelRef} not found in registry`);
+                  continue;
+                }
+                if (isProviderSuspended(state.providerCooldowns, targetModel.provider)) {
+                  failureReasons.push(`${modelRef} provider suspended after rate limit`);
                   continue;
                 }
 
@@ -408,6 +423,7 @@ export const registerRouterProvider = (
 
                 let effectiveContext = context;
                 if (!fitsContext) {
+                  if (pass === 2 && ctx && !ctx.isIdle()) actions.requestContextCompaction(ctx);
                   effectiveContext = truncateContext(context, targetContextLimit);
                   ctx?.ui.notify(
                     `Memory too large for ${modelRef} — trimmed ${context.messages.length - effectiveContext.messages.length} messages. Run /compact to reduce context size.`,
@@ -457,6 +473,12 @@ export const registerRouterProvider = (
                     const delegatedStream = dispatchStream(requestModel, effectiveContext, effectiveOptions, modelRegistry);
                     let contentReceived = false;
                     for await (const event of delegatedStream) {
+                      if (event.type === 'done' && targetModel.contextWindow && ctx && !ctx.isIdle()) {
+                        const usage = event.message.usage;
+                        const contextTokens =
+                          usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+                        if (contextTokens >= targetModel.contextWindow) actions.requestContextCompaction(ctx);
+                      }
                       if (event.type === 'error' && !contentReceived) {
                         throw new Error(event.error.errorMessage || 'Model failed before sending content.');
                       }
@@ -476,6 +498,15 @@ export const registerRouterProvider = (
                     break attemptLoop;
                   } catch (err) {
                     lastError = err;
+                    if (isRateLimitError(err)) {
+                      const suspendedUntil = suspendProvider(state.providerCooldowns, targetProvider, err);
+                      ctx?.ui.notify(
+                        `Provider ${targetProvider} rate limited; suspended for ${Math.ceil((suspendedUntil - Date.now()) / 1_000)}s.`,
+                        'warning',
+                      );
+                      if (eventsPushed > 0) throw err;
+                      break;
+                    }
                     if (eventsPushed > 0) {
                       // Stream was already partially transmitted to the consumer; cannot retry or fall back safely.
                       throw err;

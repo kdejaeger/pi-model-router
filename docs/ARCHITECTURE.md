@@ -9,12 +9,14 @@ The `pi-model-router` registers a custom logical provider (`router`) that expose
 The extension is modularized for maintainability:
 
 - **`extensions/index.ts`**: Orchestrator. Manages state, hooks into `pi` events, and wires modules together.
-- **`extensions/provider.ts`**: Implements the `router` provider and the delegation/retry loop.
-- **`extensions/routing.ts`**: Core decision logic, classifier, and gating.
+- **`extensions/provider.ts`**: Implements the `router` provider, delegation/retry loop, provider cooldown checks, and context fallback/compaction marking.
+- **`extensions/routing.ts`**: Core decision logic, classifier, gating, and classifier-provider cooldown handling.
 - **`extensions/config.ts`**: Loads, merges, and normalizes the JSON configuration.
 - **`extensions/commands.ts`**: Registers all `/router` subcommands and their autocompletions.
 - **`extensions/ui.ts`**: Manages the status line and the optional state widget.
 - **`extensions/state.ts`**: Handles session-persisted state and snapshots.
+- **`extensions/failover.ts`**: Parses rate-limit failures, computes bounded retry cooldowns, and tracks suspended providers.
+- **`extensions/compaction.ts`**: Defers and awaits one post-truncation Pi compaction at the settled-session boundary.
 - **`extensions/types.ts`**: Centralized interface and type definitions.
 
 ### Data Flow
@@ -36,17 +38,19 @@ session_start / model_select / turn_end (index.ts)
             │     └─ Otherwise → reuse previous decision
             │
             ├─→ Post-route corrections (image escalation)
-            ├─→ Auto-context truncation
+            ├─→ Provider cooldown check
+            ├─→ Auto-context truncation/response-full detection (mark settled compaction when needed)
             ├─→ Delegate to target model
-            └─→ Fallback chain on failure
+            └─→ Fallback chain on failure (suspend provider on rate limit)
             │
             ▼
       ui.ts (update status line + widget)
       state.ts (persist decision, history)
+      compaction.ts (await pending compaction after agent_settled)
 
       session_start / model_select / turn_end (index.ts)
-        only restore, validate, or reassert the router model;
-        they do not perform routing themselves.
+        restore, validate, or reassert the router model;
+        agent_settled drains deferred compaction.
 ```
 
 ## Config Merging Order

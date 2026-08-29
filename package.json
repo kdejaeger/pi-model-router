@@ -37,6 +37,7 @@
     "image": "https://raw.githubusercontent.com/kdejaeger/pi-model-router/main/docs/icon.svg"
   },
   "scripts": {
+    "test": "node --experimental-strip-types --experimental-loader ./test/loader.mjs --test test/*.test.ts",
     "tsc": "tsc --noEmit",
     "build": "tsc",
     "prepublishOnly": "npm run tsc"

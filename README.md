@@ -4,7 +4,7 @@
 
 > Think of pi-model-router as an automatic transmission for your LLM — it shifts gears up or down depending on what you're doing, so you never waste compute on a trivial task or run out of reasoning power on a complex one.
 
-This extension (forked from [yeliu84/pi-model-router](https://github.com/yeliu84/pi-model-router)) for the [pi-coding-agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent) automatically selects between high, medium, and low-tier LLMs on every few turns. It considers conversation history, context size and thresholds, image presence, manual tier pins, tool-result continuation patterns, previous routing decisions, and automatic fallbacks — with context truncation as a last resort.
+This extension (forked from [yeliu84/pi-model-router](https://github.com/yeliu84/pi-model-router)) for the [pi-coding-agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent) automatically selects between high, medium, and low-tier LLMs on every few turns. It considers conversation history, context size and thresholds, image presence, manual tier pins, tool-result continuation patterns, previous routing decisions, and automatic fallbacks — with temporary provider cooldowns after rate limits and context truncation as a last resort before settled-session compaction.
 
 ## Table of Contents
 
@@ -179,7 +179,9 @@ POST-ROUTE CORRECTIONS (always apply)
 
 EXECUTION
   Context window too small?   → Trim oldest messages to fit the target model
-  Model failed?       → Try fallbacks in order, then surface the error
+  Model rate limited? → Suspend that provider temporarily; try the next eligible fallback
+  Other model error?  → Try fallbacks in order, then surface the error
+  Context truncated?  → Compact the session after the agent settles
   Model got swapped?  → Re-assert the router model after the turn
 ```
 
@@ -237,7 +239,7 @@ Each tier can define `fallbacks` -- an ordered list of alternative models. If th
 
 When a fallback is used, `decision.isFallback` is set to `true` and shown in the status. The tier's configured thinking level (or runtime override) applies to all fallback models -- if a fallback doesn't support the requested level, pi silently clamps it.
 
-If a model fails during a turn, the router retries it **once** (2 total attempts) before moving to the next fallback in the chain.
+If a model fails during a turn, the router retries it **once** (2 total attempts) before moving to the next fallback in the chain. Rate-limit failures are different: the provider is suspended immediately, the same provider is not retried, and all models from that provider are skipped on later turns for the advertised retry delay or a 60-second default.
 
 ### Image-Aware Auto-Routing
 
@@ -255,7 +257,7 @@ The router reports the **largest context window across all models in a profile**
 
 Conservative estimation: **4 characters = 1 token**.
 
-This is a rough last-resort cut, not a replacement for pi's built-in session compaction (`/compact`).
+This is a last-resort request-time cut. When it is used during a real agent turn, or a delegated response reports that the selected model's context window is full, the router waits for `agent_settled` and invokes Pi's existing session compaction before the next prompt, so repeated turns do not keep rebuilding the same truncated context. Compaction requests themselves do not schedule another compaction.
 
 ### Session & Debugging
 
