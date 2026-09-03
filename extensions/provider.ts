@@ -17,6 +17,7 @@ import {
   parseCanonicalModelRef,
   profileNames,
   resolveModelFromRef,
+  resolveOpenCodeAttrHeaders,
   ROUTER_TIERS,
 } from './config';
 import {
@@ -421,6 +422,7 @@ export const registerRouterProvider = (
                 const effectiveHeaders: ProviderHeaders = {
                   ...targetModel.headers,
                   ...(targetProvider === 'openrouter' ? OPENROUTER_ATTR_HEADERS : {}),
+                  ...resolveOpenCodeAttrHeaders(targetProvider, options?.sessionId),
                   ...auth.headers,
                   ...originalHeaders,
                 };

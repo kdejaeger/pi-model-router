@@ -1,13 +1,7 @@
 import type { Context, Message, ProviderHeaders, SimpleStreamOptions } from '@earendil-works/pi-ai';
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { RouterConfig, RouterProfile, RouterTier, RoutingDecision } from './types';
-import {
-  createOpenRouterOnPayload,
-  dispatchStream,
-  OPENROUTER_ATTR_HEADERS,
-  parseCanonicalModelRef,
-  resolveModelFromRef,
-} from './config';
+import { createOpenRouterOnPayload, dispatchStream, OPENROUTER_ATTR_HEADERS, parseCanonicalModelRef, resolveModelFromRef, resolveOpenCodeAttrHeaders } from './config';
 
 export const extractTextFromContent = (content: string | Message['content']): string => {
   if (typeof content === 'string') {
@@ -258,11 +252,12 @@ export const runClassifier = async (
       continue;
     }
 
-    const isOpenRouter = parseCanonicalModelRef(classifierModelRef).provider === 'openrouter';
+    const { provider: classifierProvider } = parseCanonicalModelRef(classifierModelRef);
 
     const effectiveClassifierHeaders: ProviderHeaders = {
       ...model.headers,
-      ...(isOpenRouter ? OPENROUTER_ATTR_HEADERS : {}),
+      ...(classifierProvider === 'openrouter' ? OPENROUTER_ATTR_HEADERS : {}),
+      ...resolveOpenCodeAttrHeaders(classifierProvider, extCtx?.sessionManager?.getSessionId()),
       ...auth.headers,
     };
 
@@ -272,7 +267,7 @@ export const runClassifier = async (
       ...(thinking && thinking !== 'off' ? { reasoning: thinking } : {}),
     };
 
-    if (isOpenRouter) {
+    if (classifierProvider === 'openrouter') {
       const onPayload = createOpenRouterOnPayload(extCtx?.sessionManager);
       if (onPayload) classifierOptions.onPayload = onPayload;
     }

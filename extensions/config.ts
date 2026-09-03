@@ -345,6 +345,16 @@ export const OPENROUTER_ATTR_HEADERS: Readonly<Record<string, string>> = {
   'X-OpenRouter-Categories': 'cli-agent',
 };
 
+/**
+ * OpenCode session attribution headers. pi computes these against the requested
+ * (logical router) model, so they never reach delegated requests — re-apply them
+ * for the delegated target, mirroring pi's own provider-attribution rule.
+ */
+export const resolveOpenCodeAttrHeaders = (provider: string, sessionId: string | undefined): Record<string, string> =>
+  sessionId && (provider === 'opencode' || provider === 'opencode-go')
+    ? { 'x-opencode-session': sessionId, 'x-opencode-client': 'pi' }
+    : {};
+
 /** Create an onPayload handler that injects session_id for OpenRouter session tracking. */
 export const createOpenRouterOnPayload = (
   sessionProvider?: { getSessionId(): string; getSessionName(): string | undefined },
