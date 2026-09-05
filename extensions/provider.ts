@@ -20,14 +20,9 @@ import {
   resolveOpenCodeAttrHeaders,
   ROUTER_TIERS,
 } from './config';
-import {
-  buildRoutingDecision,
-  countToolResultsSinceLastUserPrompt,
-  extractTextFromContent,
-  runClassifier,
-  shouldRunClassifier,
-} from './routing';
+import { buildRoutingDecision, countToolResultsSinceLastUserPrompt, runClassifier, shouldRunClassifier } from './routing';
 import { formatDecision } from './ui';
+import { isModelSuspended, isRateLimitError, suspendModel } from './failover';
 
 const REGISTRY_WAIT_TIMEOUT_MS = 5000;
 const REGISTRY_WAIT_INITIAL_DELAY_MS = 50;
@@ -77,40 +72,6 @@ const createErrorMessage = (model: Model<Api>, message: string): AssistantMessag
   };
 };
 
-/** Token estimator: 1 token ~= 4 characters. Conservative and matches pi's compaction path. */
-const estimateTokens = (text: string): number => Math.ceil(text.length / 4);
-
-/**
- * Truncate context to fit within a target token limit by removing oldest messages.
- * Preserves the first system message and the latest user message, ensuring no orphaned tool results.
- */
-const truncateContext = (context: Context, limit: number): Context => {
-  const messages = [...context.messages];
-  if (messages.length <= 1) return context;
-
-  const systemTokens = context.systemPrompt ? estimateTokens(context.systemPrompt) : 0;
-  const totalTokens = systemTokens + messages.reduce((sum, m) => sum + estimateTokens(extractTextFromContent(m.content)), 0);
-  if (totalTokens <= limit) return context;
-
-  const latestMessage = messages.pop()!;
-  const latestTokens = estimateTokens(extractTextFromContent(latestMessage.content));
-
-  let runningTotal =
-    systemTokens + latestTokens + messages.reduce((sum, m) => sum + estimateTokens(extractTextFromContent(m.content)), 0);
-  while (messages.length > 0 && runningTotal > limit) {
-    const shifted = messages.shift()!;
-    runningTotal -= estimateTokens(extractTextFromContent(shifted.content));
-  }
-
-  // Ensure the truncated context starts cleanly at a user prompt, rather than an orphaned toolResult
-  while (messages.length > 0 && messages[0].role === 'toolResult') {
-    const dropped = messages.shift()!;
-    runningTotal -= estimateTokens(extractTextFromContent(dropped.content));
-  }
-
-  return { ...context, messages: [...messages, latestMessage] };
-};
-
 const hasRecentImage = (context: Context): boolean => {
   // Only check the last 6 messages (typically covers the last 3 full turns (3 user messages and 3 assistant responses)
   // to detect images relevant to the current turn. This covers: direct user uploads, tool results from screenshot reads,
@@ -131,10 +92,12 @@ export const registerRouterProvider = (
     lastDecision: RoutingDecision | undefined;
     readonly pinnedTierByProfile: RouterPinByProfile;
     debugEnabled: boolean;
+    readonly modelCooldowns: Map<string, number>;
   },
   actions: {
     persistState: () => void;
     updateStatus: (ctx: ExtensionContext) => void;
+    requestContextCompaction: (ctx: ExtensionContext) => boolean;
   },
 ) => {
   const currentConfig = state.currentConfig;
@@ -269,9 +232,18 @@ export const registerRouterProvider = (
                 state.debugEnabled,
                 ctx,
               );
-              const classifierResult = bShouldRunClassifier
-                ? await runClassifier(currentConfig, modelRegistry, context, lastDecision, ctx, state.debugEnabled)
-                : null;
+              const classifierResult =
+                bShouldRunClassifier && !ctx?.isIdle()
+                  ? await runClassifier(
+                      currentConfig,
+                      modelRegistry,
+                      context,
+                      lastDecision,
+                      state.modelCooldowns,
+                      ctx,
+                      state.debugEnabled,
+                    )
+                  : null;
 
               if (classifierResult) {
                 resolvedTier = classifierResult.tier;
@@ -312,7 +284,8 @@ export const registerRouterProvider = (
           let success = false;
 
           // Pass 1: models that satisfy both image support and context thresholds.
-          // Pass 2: last resort — models that satisfy image support but need context truncation.
+          // Pass 2: last resort — models that satisfy image support but exceed the context
+          // threshold; sent as-is, with compaction scheduled once the agent settles.
           attemptLoop: for (const pass of [1, 2]) {
             for (const tier of tiersToTry) {
               const tierConfig = profile[tier];
@@ -320,7 +293,7 @@ export const registerRouterProvider = (
               const modelsInTier = [tierConfig.model, ...(tierConfig.fallbacks ?? [])];
 
               if (pass === 2) {
-                // Sort models by context window descending to minimize truncation.
+                // Sort models by context window descending to prefer the roomiest model.
                 modelsInTier.sort((a, b) => {
                   const limitA = resolveModelFromRef(a, modelRegistry)?.contextWindow || 0;
                   const limitB = resolveModelFromRef(b, modelRegistry)?.contextWindow || 0;
@@ -338,6 +311,10 @@ export const registerRouterProvider = (
                 const targetModel = resolveModelFromRef(modelRef, modelRegistry);
                 if (!targetModel) {
                   failureReasons.push(`${modelRef} not found in registry`);
+                  continue;
+                }
+                if (isModelSuspended(state.modelCooldowns, modelRef)) {
+                  failureReasons.push(`${modelRef} suspended after rate limit`);
                   continue;
                 }
 
@@ -407,13 +384,17 @@ export const registerRouterProvider = (
                 // env vars independently, so we pass auth.apiKey as-is to let the
                 // compat layer handle the fallback.
 
-                let effectiveContext = context;
-                if (!fitsContext) {
-                  effectiveContext = truncateContext(context, targetContextLimit);
-                  ctx?.ui.notify(
-                    `Memory too large for ${modelRef} — trimmed ${context.messages.length - effectiveContext.messages.length} messages. Run /compact to reduce context size.`,
-                    'warning',
-                  );
+                // Context over the configured threshold: the request still goes out as-is
+                // (thresholds leave room for responses and tool loops), and Pi's session
+                // compaction heals the session once the agent settles.
+                if (
+                  !fitsContext &&
+                  ctx &&
+                  !ctx.isIdle() &&
+                  currentConfig.autoCompaction !== false &&
+                  actions.requestContextCompaction(ctx)
+                ) {
+                  ctx.ui.notify(`Context over threshold for ${modelRef} — compaction scheduled after this turn.`, 'info');
                 }
 
                 // Attention: stripping reasoning from pi's incoming options so it doesn't leak into ...baseOptions. The router controls this via delegatedReasoning below.
@@ -456,9 +437,20 @@ export const registerRouterProvider = (
                 const MAX_ATTEMPTS_PER_MODEL = 2;
                 for (let attempt = 1; attempt <= MAX_ATTEMPTS_PER_MODEL; attempt++) {
                   try {
-                    const delegatedStream = dispatchStream(requestModel, effectiveContext, effectiveOptions, modelRegistry);
+                    const delegatedStream = dispatchStream(requestModel, context, effectiveOptions, modelRegistry);
                     let contentReceived = false;
                     for await (const event of delegatedStream) {
+                      // Physical-cliff backstop: totalTokens already includes cache tokens on
+                      // every provider; the || sum only covers a zero-total usage object.
+                      if (event.type === 'done' && targetModel.contextWindow && ctx && !ctx.isIdle()) {
+                        const usage = event.message.usage;
+                        const contextTokens = usage
+                          ? usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite
+                          : 0;
+                        if (contextTokens >= targetModel.contextWindow && currentConfig.autoCompaction !== false) {
+                          actions.requestContextCompaction(ctx);
+                        }
+                      }
                       if (event.type === 'error' && !contentReceived) {
                         throw new Error(event.error.errorMessage || 'Model failed before sending content.');
                       }
@@ -478,6 +470,12 @@ export const registerRouterProvider = (
                     break attemptLoop;
                   } catch (err) {
                     lastError = err;
+                    if (isRateLimitError(err)) {
+                      const suspendedFor = suspendModel(state.modelCooldowns, modelRef, err);
+                      ctx?.ui.notify(`Model ${modelRef} rate limited; suspended for ${suspendedFor}s.`, 'warning');
+                      if (eventsPushed > 0) throw err;
+                      break;
+                    }
                     if (eventsPushed > 0) {
                       // Stream was already partially transmitted to the consumer; cannot retry or fall back safely.
                       throw err;

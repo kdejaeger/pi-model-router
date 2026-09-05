@@ -1,7 +1,15 @@
 import type { Context, Message, ProviderHeaders, SimpleStreamOptions } from '@earendil-works/pi-ai';
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { RouterConfig, RouterProfile, RouterTier, RoutingDecision } from './types';
-import { createOpenRouterOnPayload, dispatchStream, OPENROUTER_ATTR_HEADERS, parseCanonicalModelRef, resolveModelFromRef, resolveOpenCodeAttrHeaders } from './config';
+import {
+  createOpenRouterOnPayload,
+  dispatchStream,
+  OPENROUTER_ATTR_HEADERS,
+  parseCanonicalModelRef,
+  resolveModelFromRef,
+  resolveOpenCodeAttrHeaders,
+} from './config';
+import { isModelSuspended, isRateLimitError, suspendModel } from './failover';
 
 export const extractTextFromContent = (content: string | Message['content']): string => {
   if (typeof content === 'string') {
@@ -227,6 +235,7 @@ export const runClassifier = async (
   modelRegistry: ExtensionContext['modelRegistry'],
   context: Context,
   previousDecision: RoutingDecision | undefined,
+  modelCooldowns: Map<string, number>,
   extCtx?: ExtensionContext,
   debugEnabled = false,
 ): Promise<{ tier: RouterTier; reasoning: string } | undefined> => {
@@ -242,6 +251,13 @@ export const runClassifier = async (
     const model = resolveModelFromRef(classifierModelRef, modelRegistry);
     if (!model) {
       extCtx?.ui.notify(`[router] Classifier model "${classifierModelRef}" is not available, skipping.`, 'warning');
+      continue;
+    }
+    if (isModelSuspended(modelCooldowns, classifierModelRef)) {
+      extCtx?.ui.notify(
+        `[router] Classifier model "${classifierModelRef}" is temporarily suspended after a rate limit.`,
+        'warning',
+      );
       continue;
     }
 
@@ -298,12 +314,13 @@ export const runClassifier = async (
         if (debugEnabled && extCtx) {
           extCtx.ui.notify('[router] Classifier gave an unparseable response.', 'warning');
         }
-      } catch (_err) {
+      } catch (err) {
+        if (isRateLimitError(err)) {
+          suspendModel(modelCooldowns, classifierModelRef, err);
+          break;
+        }
         if (attempt < MAX_CLASSIFIER_ATTEMPTS) {
-          const errMsg = (_err as Error)?.message ?? String(_err);
-          const detectedStatus = /429|Too Many Requests|rate.?limit/i.test(errMsg) ? 429 : undefined;
-          const waitMs = detectedStatus === 429 ? attempt * 2000 : 1000;
-          await new Promise((resolve) => setTimeout(resolve, waitMs));
+          await new Promise((resolve) => setTimeout(resolve, 1000));
         }
       }
     }

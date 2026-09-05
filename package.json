@@ -37,19 +37,24 @@
     "image": "https://raw.githubusercontent.com/kdejaeger/pi-model-router/main/docs/icon.svg"
   },
   "scripts": {
+    "test": "tsx --test test/*.test.ts",
     "tsc": "tsc --noEmit",
     "build": "tsc",
     "prepublishOnly": "npm run tsc"
   },
   "peerDependencies": {
-    "@earendil-works/pi-agent-core": "^0.80",
-    "@earendil-works/pi-ai": "^0.80",
-    "@earendil-works/pi-coding-agent": "^0.80",
-    "@earendil-works/pi-tui": "^0.80",
+    "@earendil-works/pi-agent-core": "^0.85",
+    "@earendil-works/pi-ai": "^0.85",
+    "@earendil-works/pi-coding-agent": "^0.85",
+    "@earendil-works/pi-tui": "^0.85",
     "@sinclair/typebox": "*"
+  },
+  "engines": {
+    "node": ">=22.19.0"
   },
   "devDependencies": {
     "prettier": "^3.8",
+    "tsx": "^4.23.13",
     "typescript": "^6"
   }
 }

@@ -5,6 +5,7 @@ import { isRouterPersistedState, buildPersistedState } from './state';
 import { updateStatus } from './ui';
 import { registerCommands } from './commands';
 import { registerRouterProvider } from './provider';
+import { createPendingCompaction } from './compaction';
 
 const routerExtension = (pi: ExtensionAPI) => {
   let currentConfig: RouterConfig = { profiles: {} };
@@ -22,6 +23,8 @@ const routerExtension = (pi: ExtensionAPI) => {
   let lastPersistedSnapshot: string | undefined;
   let isInitialized = false;
   let isRouterDelegating = false;
+  const modelCooldowns = new Map<string, number>();
+  const pendingCompaction = createPendingCompaction();
 
   const setModelInternally = async (model: NonNullable<ExtensionContext['model']>) => {
     isRouterDelegating = true;
@@ -178,10 +181,12 @@ const routerExtension = (pi: ExtensionAPI) => {
           get debugEnabled() {
             return debugEnabled;
           },
+          modelCooldowns,
         },
         {
           persistState,
           updateStatus: actions.updateStatus,
+          requestContextCompaction: (ctx) => pendingCompaction.request(ctx),
         },
       );
     },
@@ -351,6 +356,20 @@ const routerExtension = (pi: ExtensionAPI) => {
     }
     persistState();
     actions.updateStatus(ctx);
+  });
+
+  pi.on('session_compact', async () => {
+    pendingCompaction.clear();
+  });
+
+  pi.on('agent_settled', async (_event, ctx) => {
+    await pendingCompaction.run(ctx, (error) => {
+      try {
+        ctx.ui.notify(`Router auto-compaction failed: ${error.message}`, 'warning');
+      } catch {
+        // Stale context
+      }
+    });
   });
 
   pi.on('turn_end', async (_event, ctx) => {
