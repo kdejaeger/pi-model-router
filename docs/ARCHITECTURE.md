@@ -104,7 +104,7 @@ Router state is persisted using `pi.appendEntry` with a custom type `router-stat
 
 > **Branch safety**: Because state is saved via `pi.appendEntry`, each conversation branch gets its own independent state. Switching branches restores the pins and state that were active on that branch.
 >
-> **Not persisted**: rate-limit cooldowns (`modelCooldowns`) are intentionally in-memory, per-process state — short-lived (≤60s) by nature, shared across branches, reset on restart.
+> **Not persisted**: rate-limit cooldowns (`modelCooldowns`) are intentionally in-memory, per-process state — short-lived by nature (60s default, up to 24h when the provider advertises a retry delay), shared across branches, reset on restart.
 
 ### Debug Mode
 

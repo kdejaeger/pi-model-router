@@ -21,8 +21,8 @@ import {
   ROUTER_TIERS,
 } from './config';
 import { buildRoutingDecision, countToolResultsSinceLastUserPrompt, runClassifier, shouldRunClassifier } from './routing';
-import { formatDecision } from './ui';
-import { isModelSuspended, isRateLimitError, suspendModel } from './failover';
+import { formatDecision, formatDuration } from './ui';
+import { createRetryAfterCapture, isModelSuspended, isRateLimitError, suspendModel, supportsRetryAfterCapture } from './failover';
 
 const REGISTRY_WAIT_TIMEOUT_MS = 5000;
 const REGISTRY_WAIT_INITIAL_DELAY_MS = 50;
@@ -400,6 +400,13 @@ export const registerRouterProvider = (
                 // Attention: stripping reasoning from pi's incoming options so it doesn't leak into ...baseOptions. The router controls this via delegatedReasoning below.
                 const { onPayload, headers: originalHeaders, reasoning: _incomingReasoning, ...baseOptions } = options ?? {};
 
+                // Observe raw 429 responses so the provider's retry-after header can drive the
+                // cooldown — pi-ai error events only carry the stringified body, which for
+                // OpenCode gateways says "Resets in 2hr 30min" instead of precise seconds.
+                const retryAfterCapture = supportsRetryAfterCapture(targetModel.api)
+                  ? createRetryAfterCapture(baseOptions.fetch)
+                  : undefined;
+
                 const effectiveHeaders: ProviderHeaders = {
                   ...targetModel.headers,
                   ...(targetProvider === 'openrouter' ? OPENROUTER_ATTR_HEADERS : {}),
@@ -419,6 +426,7 @@ export const registerRouterProvider = (
                   ...baseOptions,
                   apiKey: auth.apiKey,
                   headers: effectiveHeaders,
+                  ...(retryAfterCapture ? { fetch: retryAfterCapture.fetch } : {}),
                   ...(delegatedReasoning ? { reasoning: delegatedReasoning } : {}),
                 };
 
@@ -471,8 +479,10 @@ export const registerRouterProvider = (
                   } catch (err) {
                     lastError = err;
                     if (isRateLimitError(err)) {
-                      const suspendedFor = suspendModel(state.modelCooldowns, modelRef, err);
-                      ctx?.ui.notify(`Model ${modelRef} rate limited; suspended for ${suspendedFor}s.`, 'warning');
+                      const suspendedFor = suspendModel(state.modelCooldowns, modelRef, err, {
+                        retryAfterMs: retryAfterCapture?.getRetryAfterMs(),
+                      });
+                      ctx?.ui.notify(`Model ${modelRef} rate limited; suspended for ${formatDuration(suspendedFor)}.`, 'warning');
                       if (eventsPushed > 0) throw err;
                       break;
                     }

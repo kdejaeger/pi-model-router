@@ -12,6 +12,17 @@ export const formatDecision = (d: RoutingDecision): string => {
   return `[${new Date(d.timestamp).toLocaleTimeString()}] ${d.tier} -> ${d.targetProvider}/${d.targetModelId} (${d.thinking}) - ${d.reasoning}`;
 };
 
+export const formatDuration = (seconds: number): string => {
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}min`;
+  const hours = Math.floor(minutes / 60);
+  const restMinutes = minutes % 60;
+  if (hours < 24) return restMinutes > 0 ? `${hours}hr ${restMinutes}min` : `${hours}hr`;
+  const restHours = hours % 24;
+  return restHours > 0 ? `${Math.floor(hours / 24)}d ${restHours}hr` : `${Math.floor(hours / 24)}d`;
+};
+
 export const formatPinSummary = (pinnedTierByProfile: RouterPinByProfile): string => {
   const entries = Object.entries(pinnedTierByProfile)
     .sort(([a], [b]) => a.localeCompare(b))

@@ -291,7 +291,7 @@ const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
   const classifierRunOnceAfterToolCount = validateNonNegativeInt(
     raw.classifierRunOnceAfterToolCount,
     'classifierRunOnceAfterToolCount',
-    3,
+    5,
     warnings,
   );
   const classifierRunAfterToolFailures = validateNonNegativeInt(
@@ -300,7 +300,7 @@ const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
     2,
     warnings,
   );
-  const classifierInterval = validateNonNegativeInt(raw.classifierInterval, 'classifierInterval', 10, warnings);
+  const classifierInterval = validateNonNegativeInt(raw.classifierInterval, 'classifierInterval', 15, warnings);
 
   return {
     config: {

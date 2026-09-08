@@ -9,7 +9,7 @@ import {
   resolveModelFromRef,
   resolveOpenCodeAttrHeaders,
 } from './config';
-import { isModelSuspended, isRateLimitError, suspendModel } from './failover';
+import { createRetryAfterCapture, isModelSuspended, isRateLimitError, suspendModel, supportsRetryAfterCapture } from './failover';
 
 export const extractTextFromContent = (content: string | Message['content']): string => {
   if (typeof content === 'string') {
@@ -133,7 +133,7 @@ export const shouldRunClassifier = (
 ): boolean => {
   if (!lastMsgWasTool) return true;
 
-  const confInitN = currentConfig.classifierRunOnceAfterToolCount ?? 3;
+  const confInitN = currentConfig.classifierRunOnceAfterToolCount ?? 5;
   const confFailN = currentConfig.classifierRunAfterToolFailures ?? 2;
   const lastCls = lastDecision?.lastClassifierRunToolCount ?? 0;
 
@@ -143,7 +143,7 @@ export const shouldRunClassifier = (
   }
   const failCount = countConsecutiveRecentToolFailures(context);
   if (failCount >= confFailN) triggers.push(`fail(${failCount}≥${confFailN})`);
-  const confInterval = currentConfig.classifierInterval ?? 10;
+  const confInterval = currentConfig.classifierInterval ?? 15;
   if (confInterval > 0 && Math.floor(toolResultsCount / confInterval) > Math.floor(lastCls / confInterval)) {
     triggers.push(`interval(%${confInterval})`);
   }
@@ -165,7 +165,7 @@ const buildClassifierPrompt = (
   // Include messages covering the full classifier interval plus padding for coherence.
   // This ensures the classifier has enough history to understand the conversation
   // trajectory without needing the entire session.
-  const historyLimit = (classifierInterval ? classifierInterval * 2 : 20) + 4;
+  const historyLimit = (classifierInterval ? classifierInterval * 2 : 30) + 6;
   const historyText = getRecentConversationText(context, historyLimit);
 
   const previousTierLine = previousDecision?.tier
@@ -243,7 +243,7 @@ export const runClassifier = async (
   if (classifierModels.length === 0) return undefined;
 
   const thinking = currentConfig.classifierModelThinking;
-  const classifierInterval = currentConfig.classifierInterval ?? 10;
+  const classifierInterval = currentConfig.classifierInterval ?? 15;
   const classifierPrompt = buildClassifierPrompt(context, previousDecision, classifierInterval);
   const classifierContext: Context = { messages: [{ role: 'user', content: classifierPrompt, timestamp: Date.now() }] };
 
@@ -288,6 +288,12 @@ export const runClassifier = async (
       if (onPayload) classifierOptions.onPayload = onPayload;
     }
 
+    // Observe raw 429 responses so the provider's retry-after header can drive the cooldown.
+    const retryAfterCapture = supportsRetryAfterCapture(model.api) ? createRetryAfterCapture(classifierOptions.fetch) : undefined;
+    const attemptOptions: SimpleStreamOptions = retryAfterCapture
+      ? { ...classifierOptions, fetch: retryAfterCapture.fetch }
+      : classifierOptions;
+
     // Apply credential-specific baseUrl override if resolved by getApiKeyAndHeaders
     // (e.g. GitHub Copilot business/enterprise tenant endpoints) to avoid 421 Misdirected Request.
     const authBaseUrl = (auth as { baseUrl?: string }).baseUrl;
@@ -296,7 +302,7 @@ export const runClassifier = async (
     const MAX_CLASSIFIER_ATTEMPTS = 3;
     for (let attempt = 1; attempt <= MAX_CLASSIFIER_ATTEMPTS; attempt++) {
       try {
-        const stream = dispatchStream(requestModel, classifierContext, classifierOptions, modelRegistry);
+        const stream = dispatchStream(requestModel, classifierContext, attemptOptions, modelRegistry);
         let fullText = '';
         for await (const event of stream) {
           if (event.type === 'error') throw new Error(event.error?.errorMessage ?? 'Unknown classifier error');
@@ -316,7 +322,7 @@ export const runClassifier = async (
         }
       } catch (err) {
         if (isRateLimitError(err)) {
-          suspendModel(modelCooldowns, classifierModelRef, err);
+          suspendModel(modelCooldowns, classifierModelRef, err, { retryAfterMs: retryAfterCapture?.getRetryAfterMs() });
           break;
         }
         if (attempt < MAX_CLASSIFIER_ATTEMPTS) {

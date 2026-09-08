@@ -19,11 +19,11 @@ export interface RouterConfig {
   debug?: boolean;
   classifierModels?: string[];
   classifierModelThinking?: ThinkingLevel;
-  /** Run the classifier once after this many tool continuations. Default: 3. */
+  /** Run the classifier once after this many tool continuations. Default: 5. */
   classifierRunOnceAfterToolCount?: number;
   /** Run the classifier after this many consecutive tool failures in a single turn. Default: 2. */
   classifierRunAfterToolFailures?: number;
-  /** Run the classifier every Nth tool continuation during long chains. Default: 10. */
+  /** Run the classifier every Nth tool continuation during long chains. Default: 15. */
   classifierInterval?: number;
   /**
    * Schedule Pi session compaction when the context threshold is exceeded or a response fills the window. Default: true.
