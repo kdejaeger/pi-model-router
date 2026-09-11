@@ -309,8 +309,8 @@ export const runClassifier = async (
           if (event.type === 'text_delta') fullText += event.delta;
         }
 
-        const tierMatch = fullText.match(/^\s*Tier:\s*(high|medium|low)\s*$/im);
-        const reasoningMatch = fullText.match(/"?reasoning"?\s*:\s*"?([^\n\r]+)/i);
+        const tierMatch = fullText.match(/Tier:\s*(high|medium|low)\b/i);
+        const reasoningMatch = fullText.match(/Reasoning:\s*(.+)/i);
         if (tierMatch) {
           return {
             tier: tierMatch[1].toLowerCase() as RouterTier,
