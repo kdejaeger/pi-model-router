@@ -21,7 +21,7 @@ export interface RouterConfig {
   classifierModelThinking?: ThinkingLevel;
   /** Run the classifier once after this many tool continuations. Default: 5. */
   classifierRunOnceAfterToolCount?: number;
-  /** Run the classifier after this many consecutive tool failures in a single turn. Default: 2. */
+  /** Run the classifier after this many consecutive tool failures in a single turn. Default: 3. */
   classifierRunAfterToolFailures?: number;
   /** Run the classifier every Nth tool continuation during long chains. Default: 15. */
   classifierInterval?: number;

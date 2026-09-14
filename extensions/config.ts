@@ -297,7 +297,7 @@ const normalizeConfig = (raw: RouterConfig): ConfigLoadResult => {
   const classifierRunAfterToolFailures = validateNonNegativeInt(
     raw.classifierRunAfterToolFailures,
     'classifierRunAfterToolFailures',
-    2,
+    3,
     warnings,
   );
   const classifierInterval = validateNonNegativeInt(raw.classifierInterval, 'classifierInterval', 15, warnings);

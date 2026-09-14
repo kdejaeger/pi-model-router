@@ -134,7 +134,7 @@ export const shouldRunClassifier = (
   if (!lastMsgWasTool) return true;
 
   const confInitN = currentConfig.classifierRunOnceAfterToolCount ?? 5;
-  const confFailN = currentConfig.classifierRunAfterToolFailures ?? 2;
+  const confFailN = currentConfig.classifierRunAfterToolFailures ?? 3;
   const lastCls = lastDecision?.lastClassifierRunToolCount ?? 0;
 
   const triggers: string[] = [];
@@ -227,7 +227,7 @@ ${historyText}
 
 Return your decision in exactly two lines:
 Tier: [high|medium|low]
-Reasoning: [one concise sentence explaining the chosen tier]`;
+Reasoning: [one concise sentence, on one line, explaining why you have chosen that tier]`;
 };
 
 export const runClassifier = async (
