@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
+import { type Api, createAssistantMessageEventStream, getSupportedThinkingLevels, type Model } from '@earendil-works/pi-ai';
 import { registerRouterProvider } from '../extensions/provider.ts';
 
 const zeroUsage = {
@@ -250,7 +250,9 @@ test('a non-rate-limit failure is attempted exactly once before falling back', a
       api: 'test-api',
       streamSimple: (model: ReturnType<typeof makeModel>) => {
         calls.push(`${model.provider}/${model.id}`);
-        return model.provider === 'provider-a' ? makeErrorStream(model, undefined, 'HTTP 503 service unavailable') : makeSuccessStream(model);
+        return model.provider === 'provider-a'
+          ? makeErrorStream(model, undefined, 'HTTP 503 service unavailable')
+          : makeSuccessStream(model);
       },
     }),
   };
@@ -308,4 +310,145 @@ test('a non-rate-limit failure is attempted exactly once before falling back', a
     notifications.some((message) => message.includes('Failed to reach model provider-a/model-a')),
     notifications.join(' | '),
   );
+});
+
+test("the logical model advertises the union of its targets' thinking levels (incl. max)", () => {
+  // Mirrors the glm profile: every tier routes to the same model whose catalog
+  // entry declares max, so the logical model must offer it too — otherwise pi
+  // clamps setThinkingLevel('max') back to 'high'.
+  const glm = {
+    ...makeModel('opencode-go', 'glm-5.3-flash'),
+    reasoning: true,
+    thinkingLevelMap: { off: null, low: 'low', high: 'high', max: 'max' },
+  };
+  const modelRegistry = {
+    find: (provider: string, id: string) => (provider === 'opencode-go' && id === glm.id ? glm : undefined),
+  };
+  const registered: Array<{
+    name: string;
+    config: { models?: Array<{ id: string; thinkingLevelMap?: Record<string, string | null> }> };
+  }> = [];
+  registerRouterProvider(
+    { registerProvider: (name, config) => registered.push({ name, config }), setThinkingLevel: () => {} },
+    {
+      lastLoadedModelKeys: '',
+      currentConfig: {
+        profiles: {
+          glm: {
+            high: { model: 'opencode-go/glm-5.3-flash', thinking: 'max' },
+            medium: { model: 'opencode-go/glm-5.3-flash', thinking: 'high' },
+            low: { model: 'opencode-go/glm-5.3-flash', thinking: 'high' },
+          },
+        },
+      },
+      currentModelRegistry: modelRegistry,
+      lastExtensionContext: undefined,
+      selectedProfile: 'glm',
+      routerEnabled: true,
+      lastDecision: undefined,
+      pinnedTierByProfile: {},
+      debugEnabled: false,
+      modelCooldowns: new Map(),
+    },
+    { persistState: () => {}, updateStatus: () => {}, requestContextCompaction: () => false },
+  );
+
+  const logicalModel = registered[0]?.config.models?.[0];
+  assert.ok(logicalModel);
+  // Mirrors the raw glm-5.3-flash surface exactly: explicit catalog entries win
+  // (off/xhigh nulled out), missing base levels default to on, max stays offered.
+  assert.deepEqual(logicalModel.thinkingLevelMap, {
+    off: null,
+    minimal: 'minimal',
+    low: 'low',
+    medium: 'medium',
+    high: 'high',
+    xhigh: null,
+    max: 'max',
+  });
+  // What pi's picker actually consumes from this map: max must be offered, not
+  // clamped away the way it was before the union existed.
+  assert.ok(getSupportedThinkingLevels(logicalModel as unknown as Model<Api>).includes('max'));
+});
+
+test('the logical model unions the thinking maps of every target in the profile', () => {
+  const iet = { ...makeModel('provider-a', 'iet'), reasoning: true, thinkingLevelMap: { low: 'low', high: 'high' } };
+  const nova = { ...makeModel('provider-b', 'nova'), reasoning: true, thinkingLevelMap: { high: null, max: 'max' } };
+  const modelRegistry = {
+    find: (provider: string, id: string) => (provider === 'provider-a' ? iet : provider === 'provider-b' ? nova : undefined),
+  };
+  const registered: Array<{
+    name: string;
+    config: { models?: Array<{ id: string; thinkingLevelMap?: Record<string, string | null> }> };
+  }> = [];
+  registerRouterProvider(
+    { registerProvider: (name, config) => registered.push({ name, config }), setThinkingLevel: () => {} },
+    {
+      lastLoadedModelKeys: '',
+      currentConfig: {
+        profiles: { stacked: { medium: { model: 'provider-a/iet', fallbacks: ['provider-b/nova'] } } },
+      },
+      currentModelRegistry: modelRegistry,
+      lastExtensionContext: undefined,
+      selectedProfile: 'stacked',
+      routerEnabled: true,
+      lastDecision: undefined,
+      pinnedTierByProfile: {},
+      debugEnabled: false,
+      modelCooldowns: new Map(),
+    },
+    { persistState: () => {}, updateStatus: () => {}, requestContextCompaction: () => false },
+  );
+
+  const logicalModel = registered[0]?.config.models?.[0];
+  assert.ok(logicalModel);
+  // The tier model's high survives despite the fallback nulling it, and the
+  // fallback's max is offered even though the tier model lacks it.
+  assert.deepEqual(logicalModel.thinkingLevelMap, {
+    off: 'off',
+    minimal: 'minimal',
+    low: 'low',
+    medium: 'medium',
+    high: 'high',
+    xhigh: null,
+    max: 'max',
+  });
+});
+
+test('registration without a registry yields the fallback capacities and no thinking map', () => {
+  const registered: Array<{
+    name: string;
+    config: {
+      models?: Array<{
+        id: string;
+        reasoning: boolean;
+        thinkingLevelMap?: Record<string, string | null>;
+        contextWindow: number;
+        maxTokens: number;
+      }>;
+    };
+  }> = [];
+  registerRouterProvider(
+    { registerProvider: (name, config) => registered.push({ name, config }), setThinkingLevel: () => {} },
+    {
+      lastLoadedModelKeys: '',
+      currentConfig: { profiles: { glm: { high: { model: 'opencode-go/glm-5.3-flash', thinking: 'max' } } } },
+      currentModelRegistry: undefined,
+      lastExtensionContext: undefined,
+      selectedProfile: 'glm',
+      routerEnabled: true,
+      lastDecision: undefined,
+      pinnedTierByProfile: {},
+      debugEnabled: false,
+      modelCooldowns: new Map(),
+    },
+    { persistState: () => {}, updateStatus: () => {}, requestContextCompaction: () => false },
+  );
+
+  const logicalModel = registered[0]?.config.models?.[0];
+  assert.ok(logicalModel);
+  assert.equal(logicalModel.reasoning, false);
+  assert.equal(logicalModel.thinkingLevelMap, undefined);
+  assert.equal(logicalModel.contextWindow, 1_000_000);
+  assert.equal(logicalModel.maxTokens, 120_000);
 });

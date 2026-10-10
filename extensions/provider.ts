@@ -5,8 +5,10 @@ import {
   type Context,
   createAssistantMessageEventStream,
   type Model,
+  type ModelThinkingLevel,
   type ProviderHeaders,
   type SimpleStreamOptions,
+  type ThinkingLevelMap,
 } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { RouterConfig, RouterPinByProfile, RouterTier, RoutingDecision } from './types';
@@ -80,6 +82,39 @@ const hasRecentImage = (context: Context): boolean => {
   return recentMessages.some((msg) => Array.isArray(msg.content) && msg.content.some((part) => part.type === 'image'));
 };
 
+const ALL_THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+/**
+ * Whether `model` can run at `level`, mirroring pi-ai's rules: an explicit
+ * thinkingLevelMap entry wins; without one, base levels default to on and
+ * the top levels (xhigh/max) default to off.
+ */
+const supportsThinkingLevel = (model: Model<Api>, level: ModelThinkingLevel): boolean => {
+  const mapped = model.thinkingLevelMap?.[level];
+  if (mapped !== undefined) return mapped !== null;
+  return level !== 'xhigh' && level !== 'max';
+};
+
+/**
+ * Thinking levels a profile can deliver: the union over every model it may
+ * route to. Without this, pi clamps xhigh/max against the logical model, so
+ * the delegated `reasoning` never shows up in the picker, footer or session.
+ * Levels no target supports are nulled out so the logical surface mirrors
+ * its targets exactly (e.g. a catalog `off: null` stays unselectable).
+ */
+const unionThinkingLevelMap = (models: readonly Model<Api>[]): ThinkingLevelMap | undefined => {
+  if (models.length === 0) return undefined;
+  const map: ThinkingLevelMap = {};
+  for (const level of ALL_THINKING_LEVELS) {
+    if (!models.some((model) => supportsThinkingLevel(model, level))) {
+      map[level] = null;
+      continue;
+    }
+    map[level] = models.map((model) => model.thinkingLevelMap?.[level]).find((m) => typeof m === 'string') ?? level;
+  }
+  return map;
+};
+
 export const registerRouterProvider = (
   pi: ExtensionAPI,
   state: {
@@ -101,53 +136,33 @@ export const registerRouterProvider = (
   },
 ) => {
   const currentConfig = state.currentConfig;
+  const registry = state.currentModelRegistry;
 
-  // Map profiles to their capacities
+  // Map profiles to their capacities. The logical model advertises the union
+  // of what its concrete targets support, so pi offers (and keeps) the same
+  // thinking levels that delegation will actually use.
   const models = profileNames(currentConfig).map((name) => {
     const profile = currentConfig.profiles[name];
-    let maxContextWindow = 0;
-    let maxTokens = 0;
-
-    if (state.currentModelRegistry) {
-      for (const tier of ROUTER_TIERS) {
-        const tierConfig = profile[tier];
-        if (!tierConfig) continue;
-        const modelsInTier = [tierConfig.model, ...(tierConfig.fallbacks ?? [])];
-        for (const modelRef of modelsInTier) {
-          const model = resolveModelFromRef(modelRef, state.currentModelRegistry);
-          if (model) {
-            const currentContextWindow = model.contextWindow ?? 0;
-            if (currentContextWindow > maxContextWindow) {
-              maxContextWindow = currentContextWindow;
-              maxTokens = model.maxTokens ?? 120_000;
-            }
-          }
-        }
-      }
-    }
-
-    if (maxContextWindow === 0) maxContextWindow = 1_000_000;
-    if (maxTokens === 0) maxTokens = 120_000;
-
-    const profileSupportsReasoning = state.currentModelRegistry
-      ? ROUTER_TIERS.some((tier) => {
-          const tierConfig = profile[tier];
-          if (!tierConfig) return false;
-          return (
-            resolveModelFromRef(tierConfig.model, state.currentModelRegistry)?.reasoning ||
-            tierConfig.fallbacks?.some((fb) => resolveModelFromRef(fb, state.currentModelRegistry)?.reasoning)
-          );
-        })
-      : false;
+    const profileModels = registry
+      ? ROUTER_TIERS.flatMap((tier) => [profile[tier]?.model, ...(profile[tier]?.fallbacks ?? [])])
+          .filter((modelRef): modelRef is string => !!modelRef)
+          .map((modelRef) => resolveModelFromRef(modelRef, registry))
+          .filter((model) => model !== undefined)
+      : [];
+    const widest = profileModels.reduce<Model<Api> | undefined>(
+      (best, model) => ((model.contextWindow ?? 0) > (best?.contextWindow ?? 0) ? model : best),
+      undefined,
+    );
 
     return {
       id: name,
       name: `⇋ ${name}`,
-      reasoning: profileSupportsReasoning,
+      reasoning: profileModels.some((model) => model.reasoning),
+      thinkingLevelMap: unionThinkingLevelMap(profileModels),
       input: ['text', 'image'] as ('text' | 'image')[],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: maxContextWindow,
-      maxTokens,
+      contextWindow: widest?.contextWindow || 1_000_000,
+      maxTokens: widest?.maxTokens || 120_000,
     };
   });
 
@@ -164,7 +179,9 @@ export const registerRouterProvider = (
     }
   }
 
-  const loadedModelKeys = models.map((m) => `${m.id}:${m.contextWindow}:${m.maxTokens}:${m.reasoning}`).join(',');
+  const loadedModelKeys = models
+    .map((m) => `${m.id}:${m.contextWindow}:${m.maxTokens}:${m.reasoning}:${JSON.stringify(m.thinkingLevelMap)}`)
+    .join(',');
   if (state.lastLoadedModelKeys === loadedModelKeys) return; // models did not change, no need to re-register
 
   pi.registerProvider('router', {
@@ -480,7 +497,10 @@ export const registerRouterProvider = (
                     const suspendedFor = suspendModel(state.modelCooldowns, modelRef, err, {
                       retryAfterMs: retryAfterCapture?.getRetryAfterMs(),
                     });
-                    ctx?.ui.notify(`Model ${modelRef} failed: rate limited; suspended for ${formatDuration(suspendedFor)}.`, 'warning');
+                    ctx?.ui.notify(
+                      `Model ${modelRef} failed: rate limited; suspended for ${formatDuration(suspendedFor)}.`,
+                      'warning',
+                    );
                     failureReasons.push(`${modelRef} rate limited`);
                   } else {
                     ctx?.ui.notify(`Failed to reach model ${modelRef}: ${err}`, 'warning');
