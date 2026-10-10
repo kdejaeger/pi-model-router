@@ -244,7 +244,7 @@ Modern models offer large context windows, but filling them to 100% before a tie
 
 ### Fallback Chains
 
-Each tier can define `fallbacks` -- an ordered list of alternative models. If the primary model fails, the router retries each fallback in sequence before surfacing an error.
+Each tier can define `fallbacks` -- an ordered list of alternative models. If the primary model fails, the router tries each fallback once, in sequence, before surfacing an error.
 
 ```json
 {
@@ -261,7 +261,7 @@ Each tier can define `fallbacks` -- an ordered list of alternative models. If th
 
 When a fallback is used, `decision.isFallback` is set to `true` and shown in the status. The tier's configured thinking level (or runtime override) applies to all fallback models -- if a fallback doesn't support the requested level, pi silently clamps it.
 
-If a model fails during a turn, the router retries it **once** (2 total attempts) before moving to the next fallback in the chain. Rate-limit failures are different: the exact model slug is suspended immediately, not retried, and that slug is skipped on later turns for the advertised retry delay or a 60-second default. Other models from the same provider stay eligible.
+If a model fails during a turn, the router moves on to the next fallback in the chain without retrying the same model. Rate-limit failures are different: the exact model slug is suspended immediately, not retried, and that slug is skipped on later turns for the advertised retry delay or a 60-second default. Other models from the same provider stay eligible.
 
 ### Image-Aware Auto-Routing
 
@@ -338,7 +338,7 @@ Each profile defines three **tiers** (`high`, `medium`, `low`). Each tier config
 | ----------- | --------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `model`     | `string`        | _(required)_ | Canonical model ref in `"provider/model"` format (e.g. `"openai/gpt-5.4-pro"`).                                                                        |
 | `thinking`  | `ThinkingLevel` | --           | **Optional.** Reasoning/thinking level for this tier.                                                                                                  |
-| `fallbacks` | `string[]`      | --           | **Optional.** Ordered list of fallback model refs. If the primary model fails, the router retries each fallback in sequence before surfacing an error. |
+| `fallbacks` | `string[]`      | --           | **Optional.** Ordered list of fallback model refs. If the primary model fails, the router tries each fallback once, in sequence, before surfacing an error. |
 
 **Valid thinking levels** (from least to most reasoning): `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`
 

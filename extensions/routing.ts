@@ -247,7 +247,11 @@ export const runClassifier = async (
   const classifierPrompt = buildClassifierPrompt(context, previousDecision, classifierInterval);
   const classifierContext: Context = { messages: [{ role: 'user', content: classifierPrompt, timestamp: Date.now() }] };
 
+  // A failed model must never receive the same request twice; skip refs already dispatched this run.
+  const attemptedRefs = new Set<string>();
   for (const classifierModelRef of classifierModels) {
+    if (attemptedRefs.has(classifierModelRef)) continue;
+    attemptedRefs.add(classifierModelRef);
     const model = resolveModelFromRef(classifierModelRef, modelRegistry);
     if (!model) {
       extCtx?.ui.notify(`[router] Classifier model "${classifierModelRef}" is not available, skipping.`, 'warning');
@@ -299,35 +303,30 @@ export const runClassifier = async (
     const authBaseUrl = (auth as { baseUrl?: string }).baseUrl;
     const requestModel = authBaseUrl ? { ...model, baseUrl: authBaseUrl } : model;
 
-    const MAX_CLASSIFIER_ATTEMPTS = 3;
-    for (let attempt = 1; attempt <= MAX_CLASSIFIER_ATTEMPTS; attempt++) {
-      try {
-        const stream = dispatchStream(requestModel, classifierContext, attemptOptions, modelRegistry);
-        let fullText = '';
-        for await (const event of stream) {
-          if (event.type === 'error') throw new Error(event.error?.errorMessage ?? 'Unknown classifier error');
-          if (event.type === 'text_delta') fullText += event.delta;
-        }
+    try {
+      const stream = dispatchStream(requestModel, classifierContext, attemptOptions, modelRegistry);
+      let fullText = '';
+      for await (const event of stream) {
+        if (event.type === 'error') throw new Error(event.error?.errorMessage ?? 'Unknown classifier error');
+        if (event.type === 'text_delta') fullText += event.delta;
+      }
 
-        const tierMatch = fullText.match(/Tier:\s*(high|medium|low)\b/i);
-        const reasoningMatch = fullText.match(/Reasoning:\s*(.+)/i);
-        if (tierMatch) {
-          return {
-            tier: tierMatch[1].toLowerCase() as RouterTier,
-            reasoning: reasoningMatch ? reasoningMatch[1].trim() : 'Classifier decision.',
-          };
-        }
-        if (debugEnabled && extCtx) {
-          extCtx.ui.notify('[router] Classifier gave an unparseable response.', 'warning');
-        }
-      } catch (err) {
-        if (isRateLimitError(err)) {
-          suspendModel(modelCooldowns, classifierModelRef, err, { retryAfterMs: retryAfterCapture?.getRetryAfterMs() });
-          break;
-        }
-        if (attempt < MAX_CLASSIFIER_ATTEMPTS) {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
+      const tierMatch = fullText.match(/Tier:\s*(high|medium|low)\b/i);
+      const reasoningMatch = fullText.match(/Reasoning:\s*(.+)/i);
+      if (tierMatch) {
+        return {
+          tier: tierMatch[1].toLowerCase() as RouterTier,
+          reasoning: reasoningMatch ? reasoningMatch[1].trim() : 'Classifier decision.',
+        };
+      }
+      if (debugEnabled && extCtx) {
+        extCtx.ui.notify('[router] Classifier gave an unparseable response.', 'warning');
+      }
+    } catch (err) {
+      if (isRateLimitError(err)) {
+        suspendModel(modelCooldowns, classifierModelRef, err, { retryAfterMs: retryAfterCapture?.getRetryAfterMs() });
+      } else {
+        extCtx?.ui.notify(`[router] Model ${classifierModelRef} failed: ${err}`, 'warning');
       }
     }
   }

@@ -441,61 +441,54 @@ export const registerRouterProvider = (
                 const authBaseUrl = (auth as { baseUrl?: string }).baseUrl;
                 const requestModel = authBaseUrl ? { ...targetModel, baseUrl: authBaseUrl } : targetModel;
 
-                let eventsPushed = 0;
-                const MAX_ATTEMPTS_PER_MODEL = 2;
-                for (let attempt = 1; attempt <= MAX_ATTEMPTS_PER_MODEL; attempt++) {
-                  try {
-                    const delegatedStream = dispatchStream(requestModel, context, effectiveOptions, modelRegistry);
-                    let contentReceived = false;
-                    for await (const event of delegatedStream) {
-                      // Physical-cliff backstop: totalTokens already includes cache tokens on
-                      // every provider; the || sum only covers a zero-total usage object.
-                      if (event.type === 'done' && targetModel.contextWindow && ctx && !ctx.isIdle()) {
-                        const usage = event.message.usage;
-                        const contextTokens = usage
-                          ? usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite
-                          : 0;
-                        if (contextTokens >= targetModel.contextWindow && currentConfig.autoCompaction !== false) {
-                          actions.requestContextCompaction(ctx);
-                        }
+                let pushedAnyEvent = false;
+                try {
+                  const delegatedStream = dispatchStream(requestModel, context, effectiveOptions, modelRegistry);
+                  let contentReceived = false;
+                  for await (const event of delegatedStream) {
+                    // Physical-cliff backstop: totalTokens already includes cache tokens on
+                    // every provider; the || sum only covers a zero-total usage object.
+                    if (event.type === 'done' && targetModel.contextWindow && ctx && !ctx.isIdle()) {
+                      const usage = event.message.usage;
+                      const contextTokens = usage
+                        ? usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite
+                        : 0;
+                      if (contextTokens >= targetModel.contextWindow && currentConfig.autoCompaction !== false) {
+                        actions.requestContextCompaction(ctx);
                       }
-                      if (event.type === 'error' && !contentReceived) {
-                        throw new Error(event.error.errorMessage || 'Model failed before sending content.');
-                      }
-                      if (
-                        event.type === 'text_delta' ||
-                        event.type === 'thinking_delta' ||
-                        event.type === 'toolcall_delta' ||
-                        event.type === 'toolcall_end'
-                      ) {
-                        contentReceived = true;
-                      }
-                      stream.push(event);
-                      eventsPushed++;
                     }
-                    success = true;
-                    state.lastDecision = decision;
-                    break attemptLoop;
-                  } catch (err) {
-                    lastError = err;
-                    if (isRateLimitError(err)) {
-                      const suspendedFor = suspendModel(state.modelCooldowns, modelRef, err, {
-                        retryAfterMs: retryAfterCapture?.getRetryAfterMs(),
-                      });
-                      ctx?.ui.notify(`Model ${modelRef} rate limited; suspended for ${formatDuration(suspendedFor)}.`, 'warning');
-                      if (eventsPushed > 0) throw err;
-                      break;
+                    if (event.type === 'error' && !contentReceived) {
+                      throw new Error(event.error.errorMessage || 'Model failed before sending content.');
                     }
-                    if (eventsPushed > 0) {
-                      // Stream was already partially transmitted to the consumer; cannot retry or fall back safely.
-                      throw err;
+                    if (
+                      event.type === 'text_delta' ||
+                      event.type === 'thinking_delta' ||
+                      event.type === 'toolcall_delta' ||
+                      event.type === 'toolcall_end'
+                    ) {
+                      contentReceived = true;
                     }
-                    const remaining = MAX_ATTEMPTS_PER_MODEL - attempt;
-                    const retryMsg = remaining > 0 ? ` — ${remaining} ${remaining === 1 ? 'retry' : 'retries'} left` : '';
-                    ctx?.ui.notify(
-                      `Failed to reach model ${modelRef} (attempt ${attempt}/${MAX_ATTEMPTS_PER_MODEL}): ${err}${retryMsg}`,
-                      'warning',
-                    );
+                    stream.push(event);
+                    pushedAnyEvent = true;
+                  }
+                  success = true;
+                  state.lastDecision = decision;
+                  break attemptLoop;
+                } catch (err) {
+                  lastError = err;
+                  if (isRateLimitError(err)) {
+                    const suspendedFor = suspendModel(state.modelCooldowns, modelRef, err, {
+                      retryAfterMs: retryAfterCapture?.getRetryAfterMs(),
+                    });
+                    ctx?.ui.notify(`Model ${modelRef} failed: rate limited; suspended for ${formatDuration(suspendedFor)}.`, 'warning');
+                    failureReasons.push(`${modelRef} rate limited`);
+                  } else {
+                    ctx?.ui.notify(`Failed to reach model ${modelRef}: ${err}`, 'warning');
+                    failureReasons.push(`${modelRef}: ${err}`);
+                  }
+                  if (pushedAnyEvent) {
+                    // Stream was already partially transmitted to the consumer; cannot fall back safely.
+                    throw err;
                   }
                 }
               }
@@ -503,7 +496,7 @@ export const registerRouterProvider = (
           }
 
           if (!success) {
-            const errorMsg = `Failed to delegate to any model in the chain.${failureReasons.length > 0 ? ' Reasons: ' + failureReasons.filter(Boolean).join('; ') + '.' : ''}`;
+            const errorMsg = `Failed to delegate to any model in the chain.${failureReasons.length > 0 ? ' Reasons: ' + failureReasons.join('; ') + '.' : ''}`;
             const lastErrorText = lastError instanceof Error ? lastError.message : String(lastError ?? '');
             const combinedError = lastError ? new Error(`${lastErrorText} — ${errorMsg}`) : new Error(errorMsg);
             throw combinedError;
